@@ -1,4 +1,4 @@
-import type { KnownBlock, PlainTextOption } from "@slack/bolt";
+import type { KnownBlock, PlainTextOption } from "@slack/types";
 import { listWorkflows } from "../config/workflows.js";
 import type { SupportedIssueType, WorkflowDefinition } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";

@@ -28,7 +28,7 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     maxResults: 20
   };
 
-  const result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search", {
+  const result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search/jql", {
     method: "POST",
     body: JSON.stringify(payload)
   });

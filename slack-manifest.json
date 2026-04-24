@@ -9,6 +9,11 @@
       "display_name": "Gecko Reporting Workflow",
       "always_online": true
     },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": false,
+      "messages_tab_read_only_enabled": false
+    },
     "shortcuts": [
       {
         "name": "Create Gecko Report",
@@ -17,6 +22,9 @@
         "description": "Create a Jira Bug or EOD Report from Slack"
       }
     ]
+  },
+  "event_subscriptions": {
+    "bot_events": ["app_home_opened"]
   },
   "oauth_config": {
     "scopes": {
