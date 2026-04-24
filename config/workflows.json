@@ -1,0 +1,9 @@
+[
+  {
+    "key": "api_data_delivery",
+    "label": "API Data Delivery",
+    "jiraProjectKey": "APIDD",
+    "allowedIssueTypes": ["Bug", "EOD Report"],
+    "epicSearchJql": "project = APIDD AND issuetype = Epic"
+  }
+]
