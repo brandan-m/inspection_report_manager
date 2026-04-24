@@ -6,6 +6,10 @@ import { searchEpics } from "../jira/searchEpics.js";
 import { CALLBACKS } from "./constants.js";
 import { buildCreateIssueModal, selectedIssueTypeFromValue } from "./modal.js";
 
+function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
+  return view?.private_metadata || undefined;
+}
+
 function getSelectedWorkflowKeyFromState(
   stateValues?: ViewSubmitAction["view"]["state"]["values"]
 ): string {
@@ -17,6 +21,12 @@ function getSelectedWorkflowKeyFromState(
 }
 
 function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
+  const metadataWorkflowKey = getWorkflowKeyFromViewMetadata(body.view);
+
+  if (metadataWorkflowKey) {
+    return metadataWorkflowKey;
+  }
+
   const selected = body.view?.state.values?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction] as
     | { selected_option?: { value?: string } }
     | undefined;
@@ -95,8 +105,33 @@ export function registerSlackHandlers(app: App): void {
     logger.info(`Opened modal from App Home for user ${body.user.id}`);
   });
 
-  app.action(CALLBACKS.workflowAction, async ({ ack }) => {
+  app.action(CALLBACKS.workflowAction, async ({ ack, body, client, logger }) => {
     await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("Workflow selection action did not include a modal view.");
+      return;
+    }
+
+    const selectedWorkflowKey =
+      body.actions[0] && "selected_option" in body.actions[0]
+        ? body.actions[0].selected_option?.value
+        : undefined;
+
+    if (!selectedWorkflowKey) {
+      logger.error("Workflow selection action did not include a selected workflow.");
+      return;
+    }
+
+    const workflow = getWorkflowByKey(selectedWorkflowKey);
+
+    await client.views.update({
+      view_id: body.view.id,
+      hash: body.view.hash,
+      view: buildCreateIssueModal(workflow)
+    });
+
+    logger.info(`Updated modal workflow to ${workflow.key}`);
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
@@ -121,7 +156,8 @@ export function registerSlackHandlers(app: App): void {
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
     await ack();
 
-    const workflowKey = getSelectedWorkflowKeyFromState(view.state.values);
+    const workflowKey =
+      getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
     const workflow = getWorkflowByKey(workflowKey);
     const values = view.state.values;
     const parentEpicKey =

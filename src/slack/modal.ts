@@ -28,6 +28,7 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
     {
       type: "input",
       block_id: CALLBACKS.workflowBlock,
+      dispatch_action: true,
       element: {
         type: "static_select",
         action_id: CALLBACKS.workflowAction,
@@ -120,6 +121,7 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.createIssueView,
+    private_metadata: defaultWorkflow.key,
     title: {
       type: "plain_text" as const,
       text: "Create Gecko Report"

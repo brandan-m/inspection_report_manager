@@ -5,5 +5,12 @@
     "jiraProjectKey": "APIDD",
     "allowedIssueTypes": ["Bug", "EOD Report"],
     "epicSearchJql": "project = APIDD AND issuetype = Epic"
+  },
+  {
+    "key": "reporting_job_board",
+    "label": "Reporting/Job Board",
+    "jiraProjectKey": "RB",
+    "allowedIssueTypes": ["Bug", "EOD Report"],
+    "epicSearchJql": "project = RB AND issuetype = Epic"
   }
 ]
