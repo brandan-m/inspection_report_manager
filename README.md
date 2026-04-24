@@ -67,6 +67,13 @@ npm run build
 npm start
 ```
 
+To mirror the deployed runtime locally with Docker:
+
+```bash
+docker build -t gecko-reporting-workflow .
+docker run --env-file .env -p 3000:3000 gecko-reporting-workflow
+```
+
 ## Slack App Setup
 
 Create a Slack app and enable:
@@ -150,6 +157,25 @@ Deployment checklist:
 - keep Socket Mode enabled, or switch to HTTPS-based event delivery
 - reinstall the Slack app after any scope or manifest changes
 - document the workflow config and board/project mappings in `config/workflows.json`
+
+### Docker-Based Deployment
+
+The repo now includes:
+
+- [Dockerfile](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/Dockerfile)
+- [entrypoint.sh](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/entrypoint.sh)
+- [.dockerignore](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.dockerignore)
+
+This is the closest match to the `gecko_salesforce` methodology: build the app into a container and run the container as the always-on service.
+
+Basic Docker flow:
+
+```bash
+docker build -t gecko-reporting-workflow .
+docker run --env-file .env -p 3000:3000 gecko-reporting-workflow
+```
+
+If your host platform deploys containers directly, you can use this Dockerfile instead of the Render-native `render.yaml`.
 
 ### Render Example
 
