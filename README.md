@@ -2,7 +2,7 @@
 
 `gecko_reporting_workflow` is a small Slack-to-Jira integration service for creating Jira work from Slack while keeping Jira Epics as the parent source of truth.
 
-The initial workflow is configured for the `APIDD` Jira project (`API Data Delivery`). The repository is structured so additional Jira workflows, boards, or filter-backed scopes can be added later without changing the core Slack handling flow.
+The repository is structured so additional Jira workflows, boards, or filter-backed scopes can be added later without changing the core Slack handling flow.
 
 ## What It Does
 
@@ -11,16 +11,11 @@ The initial workflow is configured for the `APIDD` Jira project (`API Data Deliv
 - Creates `Bug` or `EOD Report` issues in Jira
 - Attaches the selected Epic as the parent
 - Optionally posts a confirmation message to a Slack test channel
-
-Planned future workflow support includes:
-
-- Epic creation
-- Additional board/filter-backed scopes such as `Reporting/Job Board`
-- More work types and custom field mappings
+- Supports workflow-specific required fields, such as the `Reporting/Job Board` Bug requirements
 
 ## Current Workflow Configuration
 
-The repo starts with one workflow:
+The repo currently includes:
 
 - Label: `API Data Delivery`
 - Key: `api_data_delivery`
@@ -28,6 +23,15 @@ The repo starts with one workflow:
 - Allowed work types:
   - `Bug`
   - `EOD Report`
+- Label: `Reporting/Job Board`
+- Key: `reporting_job_board`
+- Jira project: `RB`
+- Allowed work types:
+  - `Bug`
+  - `EOD Report`
+- Additional Bug fields:
+  - `RUG Blocker Type`
+  - `RUG Ops Downtime (hours)`
 
 ## Repository Layout
 
@@ -56,11 +60,19 @@ npm run dev
 
 If you want to avoid a public callback URL during development, set `SLACK_USE_SOCKET_MODE=true` and provide an app-level token.
 
+For a production-style local check:
+
+```bash
+npm run build
+npm start
+```
+
 ## Slack App Setup
 
 Create a Slack app and enable:
 
 - Interactivity
+- App Home
 - A global shortcut, such as `Create Gecko Report`
 - Socket Mode for local development, or an HTTPS Request URL for HTTP mode
 
@@ -70,6 +82,7 @@ Recommended bot scopes:
 - `channels:join`
 - `channels:read`
 - `commands`
+- `im:write`
 
 Suggested global shortcut:
 
@@ -86,19 +99,88 @@ Slack documents both patterns in its official setup and messaging docs:
 - [Creating an app from app settings](https://docs.slack.dev/app-management/quickstart-app-settings)
 - [conversations.join](https://docs.slack.dev/reference/methods/conversations.join/)
 
+Recommended App Home setup:
+
+- Enable the Home tab
+- Subscribe to the bot event `app_home_opened`
+- Reinstall the app after changing scopes, events, or App Home settings
+
 ## Jira Setup
 
 Create a Jira API token for the service account and confirm that:
 
 - the account can search Epics in `APIDD`
 - the account can create issues in `APIDD`
+- the account can search Epics in `RB`
+- the account can create issues in `RB`
 - `Bug` and `EOD Report` are standard issue types under Epic in your Jira scheme
+- any workflow-specific required fields are either present in the modal or no longer required in Jira
 
 The initial Epic search JQL is:
 
 ```text
 project = APIDD AND issuetype = Epic
 ```
+
+## Testing Flow
+
+For a local smoke test:
+
+1. Start the app with `npm run dev`
+2. Open `Gecko Reporting Workflow` in Slack
+3. Use the App Home button to open the modal
+4. Verify:
+   - `API Data Delivery` only shows APIDD Epics
+   - `Reporting/Job Board` only shows RB Epics
+   - RB Bug flows show the extra required fields
+   - EOD flows do not show RB-only Bug fields
+
+## Deployment Notes
+
+For a persistent deployment, move the app off a laptop and into a long-running environment such as:
+
+- Render
+- Railway
+- Fly.io
+- an internal container or VM
+
+Deployment checklist:
+
+- store Slack and Jira secrets outside the repo
+- keep Socket Mode enabled, or switch to HTTPS-based event delivery
+- reinstall the Slack app after any scope or manifest changes
+- document the workflow config and board/project mappings in `config/workflows.json`
+
+### Render Example
+
+The repo now includes [render.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/render.yaml) for a simple Render deployment using Socket Mode.
+
+To deploy on Render:
+
+1. Create a new Web Service from the GitHub repo
+2. Let Render detect `render.yaml`, or point it at that file
+3. Set the secret env vars in Render:
+   - `SLACK_BOT_TOKEN`
+   - `SLACK_SIGNING_SECRET`
+   - `SLACK_APP_TOKEN`
+   - `SLACK_TEST_CHANNEL_ID`
+   - `JIRA_BASE_URL`
+   - `JIRA_EMAIL`
+   - `JIRA_API_TOKEN`
+4. Deploy
+5. After the service is live, confirm the Slack app still works from App Home
+
+Because the app is using Socket Mode, you do not need a public Slack events URL for this deployment model.
+
+### Production Checklist
+
+Before calling it production-ready:
+
+- verify `npm run build && npm start` works in the host environment
+- confirm Slack scopes include `im:write` if you want DM confirmations
+- verify both APIDD and RB flows against live Jira
+- decide whether `SLACK_TEST_CHANNEL_ID` should stay as a test channel or move to a production notifications channel
+- document ownership for future workflow config changes
 
 ## Adding Another Workflow Later
 

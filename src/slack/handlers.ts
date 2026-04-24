@@ -3,8 +3,13 @@ import { getWorkflowByKey, listWorkflows } from "../config/workflows.js";
 import { env } from "../config/env.js";
 import { createIssue } from "../jira/createIssue.js";
 import { searchEpics } from "../jira/searchEpics.js";
+import type { BlockerType } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
-import { buildCreateIssueModal, selectedIssueTypeFromValue } from "./modal.js";
+import {
+  buildCreateIssueModal,
+  requiresReportingBugFields,
+  selectedIssueTypeFromValue
+} from "./modal.js";
 
 function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
   return view?.private_metadata || undefined;
@@ -32,6 +37,60 @@ function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
     | undefined;
 
   return selected?.selected_option?.value ?? listWorkflows()[0].key;
+}
+
+function getSelectedIssueTypeFromState(
+  stateValues?: ViewSubmitAction["view"]["state"]["values"]
+): Exclude<"Bug" | "EOD Report" | "Epic", "Epic"> {
+  const selected = stateValues?.[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction] as
+    | { selected_option?: { value?: string } }
+    | undefined;
+
+  return selectedIssueTypeFromValue(selected?.selected_option?.value ?? "Bug");
+}
+
+function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["values"]) {
+  const blockerTypeValue =
+    stateValues?.[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction] &&
+    "selected_option" in stateValues[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction]
+      ? stateValues[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction].selected_option?.value
+      : undefined;
+
+  const blockerType: BlockerType | undefined =
+    blockerTypeValue === "Customer" ||
+    blockerTypeValue === "Operations" ||
+    blockerTypeValue === "Environmental" ||
+    blockerTypeValue === "Other"
+      ? blockerTypeValue
+      : undefined;
+
+  return {
+    selectedIssueType: getSelectedIssueTypeFromState(stateValues),
+    summary:
+      stateValues?.[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
+      "value" in stateValues[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
+        ? stateValues[CALLBACKS.summaryBlock][CALLBACKS.summaryAction].value ?? undefined
+        : undefined,
+    details:
+      stateValues?.[CALLBACKS.detailsBlock]?.[CALLBACKS.detailsAction] &&
+      "value" in stateValues[CALLBACKS.detailsBlock][CALLBACKS.detailsAction]
+        ? stateValues[CALLBACKS.detailsBlock][CALLBACKS.detailsAction].value ?? undefined
+        : undefined,
+    blockerType,
+    opsDowntimeHours:
+      stateValues?.[CALLBACKS.downtimeBlock]?.[CALLBACKS.downtimeAction] &&
+      "value" in stateValues[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction]
+        ? stateValues[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction].value ?? undefined
+        : undefined
+  };
+}
+
+function formatJiraErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Could not create Jira issue.";
+  }
+
+  return error.message.replace(/^Jira request failed \(\d+\):\s*/, "");
 }
 
 function buildHomeView() {
@@ -156,10 +215,30 @@ export function registerSlackHandlers(app: App): void {
     await client.views.update({
       view_id: body.view.id,
       hash: body.view.hash,
-      view: buildCreateIssueModal(workflow)
+      view: buildCreateIssueModal(workflow, getModalStateValues(body.view.state.values))
     });
 
     logger.info(`Updated modal workflow to ${workflow.key}`);
+  });
+
+  app.action(CALLBACKS.issueTypeAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("Issue type action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+
+    await client.views.update({
+      view_id: body.view.id,
+      hash: body.view.hash,
+      view: buildCreateIssueModal(workflow, getModalStateValues(body.view.state.values))
+    });
+
+    logger.info(`Updated modal issue type for workflow ${workflow.key}`);
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
@@ -182,8 +261,6 @@ export function registerSlackHandlers(app: App): void {
   });
 
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
-    await ack();
-
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
     const workflow = getWorkflowByKey(workflowKey);
@@ -220,14 +297,47 @@ export function registerSlackHandlers(app: App): void {
         : "";
 
     if (!parentEpicKey || !issueTypeValue || !summary || !details) {
-      logger.error("Required modal fields were missing.");
+      await ack({
+        response_action: "errors",
+        errors: {
+          ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
+          ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
+          ...(summary ? {} : { [CALLBACKS.summaryBlock]: "Summary is required." }),
+          ...(details ? {} : { [CALLBACKS.detailsBlock]: "Details are required." })
+        }
+      });
       return;
     }
+
+    const selectedIssueType = selectedIssueTypeFromValue(issueTypeValue);
+    if (requiresReportingBugFields(workflow, selectedIssueType)) {
+      const errors: Record<string, string> = {};
+
+      if (!blockerTypeValue) {
+        errors[CALLBACKS.blockerTypeBlock] = "Choose a RUG Blocker Type.";
+      }
+
+      if (!downtimeValue) {
+        errors[CALLBACKS.downtimeBlock] = "Enter the downtime in hours.";
+      } else if (Number.isNaN(Number(downtimeValue))) {
+        errors[CALLBACKS.downtimeBlock] = "Downtime must be a number.";
+      }
+
+      if (Object.keys(errors).length > 0) {
+        await ack({
+          response_action: "errors",
+          errors
+        });
+        return;
+      }
+    }
+
+    await ack();
 
     try {
       const issue = await createIssue({
         workflow,
-        issueType: selectedIssueTypeFromValue(issueTypeValue),
+        issueType: selectedIssueType,
         parentEpicKey,
         summary,
         details,
@@ -262,7 +372,7 @@ export function registerSlackHandlers(app: App): void {
       await trySendDirectMessage(
         client,
         body.user.id,
-        error instanceof Error ? `Could not create Jira issue: ${error.message}` : "Could not create Jira issue.",
+        `Could not create Jira issue: ${formatJiraErrorMessage(error)}`,
         logger
       );
     }

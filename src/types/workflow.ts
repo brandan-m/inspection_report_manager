@@ -1,21 +1,23 @@
 export type SupportedIssueType = "Bug" | "EOD Report" | "Epic";
+export type SelectableIssueType = Exclude<SupportedIssueType, "Epic">;
+export type BlockerType = "Customer" | "Operations" | "Environmental" | "Other";
 
 export interface WorkflowDefinition {
   key: string;
   label: string;
   jiraProjectKey: string;
-  allowedIssueTypes: SupportedIssueType[];
+  allowedIssueTypes: SelectableIssueType[];
   epicSearchJql: string;
 }
 
 export interface CreateIssueInput {
   workflow: WorkflowDefinition;
-  issueType: Exclude<SupportedIssueType, "Epic">;
+  issueType: SelectableIssueType;
   parentEpicKey: string;
   summary: string;
   details: string;
   requesterName?: string;
-  blockerType?: "Customer" | "Operations" | "Environmental" | "Other";
+  blockerType?: BlockerType;
   opsDowntimeHours?: number;
 }
 

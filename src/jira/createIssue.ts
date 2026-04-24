@@ -6,12 +6,6 @@ interface JiraCreateIssueResponse {
   self: string;
 }
 
-interface JiraIssueResponse {
-  fields: {
-    summary: string;
-  };
-}
-
 interface JiraCreateMetaResponse {
   projects: Array<{
     issuetypes: Array<{
@@ -29,10 +23,6 @@ interface JiraCreateMetaResponse {
   }>;
 }
 
-async function getIssueSummary(issueKey: string): Promise<string> {
-  const result = await jiraRequest<JiraIssueResponse>(`/rest/api/3/issue/${issueKey}?fields=summary`);
-  return result.fields.summary;
-}
 async function getCreateFields(projectKey: string, issueType: string) {
   const result = await jiraRequest<JiraCreateMetaResponse>(
     `/rest/api/3/issue/createmeta?projectKeys=${encodeURIComponent(projectKey)}&issuetypeNames=${encodeURIComponent(issueType)}&expand=projects.issuetypes.fields`

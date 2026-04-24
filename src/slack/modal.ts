@@ -1,6 +1,6 @@
 import type { KnownBlock, PlainTextOption } from "@slack/types";
 import { listWorkflows } from "../config/workflows.js";
-import type { SupportedIssueType, WorkflowDefinition } from "../types/workflow.js";
+import type { BlockerType, SelectableIssueType, SupportedIssueType, WorkflowDefinition } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 
 function workflowOptions(): PlainTextOption[] {
@@ -33,7 +33,26 @@ function blockerTypeOptions(): PlainTextOption[] {
   }));
 }
 
-export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
+export interface ModalStateValues {
+  selectedIssueType?: SelectableIssueType;
+  summary?: string;
+  details?: string;
+  blockerType?: BlockerType;
+  opsDowntimeHours?: string;
+}
+
+function shouldShowReportingBugFields(
+  workflow: WorkflowDefinition,
+  issueType: SelectableIssueType
+): boolean {
+  return workflow.jiraProjectKey === "RB" && issueType === "Bug";
+}
+
+export function buildCreateIssueModal(
+  defaultWorkflow: WorkflowDefinition,
+  state: ModalStateValues = {}
+) {
+  const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
   const blocks: KnownBlock[] = [
     {
       type: "input",
@@ -76,15 +95,16 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
     {
       type: "input",
       block_id: CALLBACKS.issueTypeBlock,
+      dispatch_action: true,
       element: {
         type: "static_select",
         action_id: CALLBACKS.issueTypeAction,
         initial_option: {
           text: {
             type: "plain_text",
-            text: defaultWorkflow.allowedIssueTypes[0]
+            text: selectedIssueType
           },
-          value: defaultWorkflow.allowedIssueTypes[0]
+          value: selectedIssueType
         },
         options: issueTypeOptions(defaultWorkflow)
       },
@@ -95,45 +115,11 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
     },
     {
       type: "input",
-      block_id: CALLBACKS.blockerTypeBlock,
-      optional: true,
-      element: {
-        type: "static_select",
-        action_id: CALLBACKS.blockerTypeAction,
-        placeholder: {
-          type: "plain_text",
-          text: "Required for Reporting/Job Board Bugs"
-        },
-        options: blockerTypeOptions()
-      },
-      label: {
-        type: "plain_text",
-        text: "RUG Blocker Type"
-      }
-    },
-    {
-      type: "input",
-      block_id: CALLBACKS.downtimeBlock,
-      optional: true,
-      element: {
-        type: "plain_text_input",
-        action_id: CALLBACKS.downtimeAction,
-        placeholder: {
-          type: "plain_text",
-          text: "Required for Reporting/Job Board Bugs"
-        }
-      },
-      label: {
-        type: "plain_text",
-        text: "RUG Ops Downtime (hours)"
-      }
-    },
-    {
-      type: "input",
       block_id: CALLBACKS.summaryBlock,
       element: {
         type: "plain_text_input",
         action_id: CALLBACKS.summaryAction,
+        initial_value: state.summary,
         placeholder: {
           type: "plain_text",
           text: "Short issue summary"
@@ -151,6 +137,7 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
         type: "plain_text_input",
         action_id: CALLBACKS.detailsAction,
         multiline: true,
+        initial_value: state.details,
         placeholder: {
           type: "plain_text",
           text: "Add details for the Jira issue"
@@ -162,6 +149,53 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
       }
     }
   ];
+
+  if (shouldShowReportingBugFields(defaultWorkflow, selectedIssueType)) {
+    blocks.splice(3, 0, {
+      type: "input",
+      block_id: CALLBACKS.blockerTypeBlock,
+      element: {
+        type: "static_select",
+        action_id: CALLBACKS.blockerTypeAction,
+        initial_option: state.blockerType
+          ? {
+              text: {
+                type: "plain_text",
+                text: state.blockerType
+              },
+              value: state.blockerType
+            }
+          : undefined,
+        placeholder: {
+          type: "plain_text",
+          text: "Required for Reporting/Job Board Bugs"
+        },
+        options: blockerTypeOptions()
+      },
+      label: {
+        type: "plain_text",
+        text: "RUG Blocker Type"
+      }
+    });
+
+    blocks.splice(4, 0, {
+      type: "input",
+      block_id: CALLBACKS.downtimeBlock,
+      element: {
+        type: "plain_text_input",
+        action_id: CALLBACKS.downtimeAction,
+        initial_value: state.opsDowntimeHours,
+        placeholder: {
+          type: "plain_text",
+          text: "Required for Reporting/Job Board Bugs"
+        }
+      },
+      label: {
+        type: "plain_text",
+        text: "RUG Ops Downtime (hours)"
+      }
+    });
+  }
 
   return {
     type: "modal" as const,
@@ -189,4 +223,11 @@ export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssu
   }
 
   return value;
+}
+
+export function requiresReportingBugFields(
+  workflow: WorkflowDefinition,
+  issueType: Exclude<SupportedIssueType, "Epic">
+): boolean {
+  return shouldShowReportingBugFields(workflow, issueType);
 }
