@@ -64,6 +64,34 @@ function buildHomeView() {
   };
 }
 
+async function sendDirectMessage(client: App["client"], userId: string, text: string) {
+  const conversation = await client.conversations.open({
+    users: userId
+  });
+
+  if (!conversation.channel?.id) {
+    throw new Error(`Could not open a DM conversation for user ${userId}.`);
+  }
+
+  await client.chat.postMessage({
+    channel: conversation.channel.id,
+    text
+  });
+}
+
+async function trySendDirectMessage(
+  client: App["client"],
+  userId: string,
+  text: string,
+  logger: Pick<Console, "warn">
+) {
+  try {
+    await sendDirectMessage(client, userId, text);
+  } catch (error) {
+    logger.warn("Could not send DM confirmation.", error);
+  }
+}
+
 export function registerSlackHandlers(app: App): void {
   app.event("app_home_opened", async ({ event, client, logger }) => {
     await client.views.publish({
@@ -175,6 +203,16 @@ export function registerSlackHandlers(app: App): void {
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
         ? values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction].value
         : "";
+    const blockerTypeValue =
+      values[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction] &&
+      "selected_option" in values[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction]
+        ? values[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction].selected_option?.value
+        : undefined;
+    const downtimeValue =
+      values[CALLBACKS.downtimeBlock]?.[CALLBACKS.downtimeAction] &&
+      "value" in values[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction]
+        ? values[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction].value
+        : "";
     const details =
       values[CALLBACKS.detailsBlock]?.[CALLBACKS.detailsAction] &&
       "value" in values[CALLBACKS.detailsBlock][CALLBACKS.detailsAction]
@@ -186,27 +224,47 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    const issue = await createIssue({
-      workflow,
-      issueType: selectedIssueTypeFromValue(issueTypeValue),
-      parentEpicKey,
-      summary,
-      details,
-      requesterName: body.user.id
-    });
-
-    if (env.SLACK_TEST_CHANNEL_ID) {
-      await client.chat.postMessage({
-        channel: env.SLACK_TEST_CHANNEL_ID,
-        text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
+    try {
+      const issue = await createIssue({
+        workflow,
+        issueType: selectedIssueTypeFromValue(issueTypeValue),
+        parentEpicKey,
+        summary,
+        details,
+        requesterName: body.user.id,
+        blockerType:
+          blockerTypeValue === "Customer" ||
+          blockerTypeValue === "Operations" ||
+          blockerTypeValue === "Environmental" ||
+          blockerTypeValue === "Other"
+            ? blockerTypeValue
+            : undefined,
+        opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
       });
+
+      if (env.SLACK_TEST_CHANNEL_ID) {
+        await client.chat.postMessage({
+          channel: env.SLACK_TEST_CHANNEL_ID,
+          text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
+        });
+      }
+
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
+        logger
+      );
+
+      logger.info(`Created Jira issue ${issue.key}`);
+    } catch (error) {
+      logger.error(error);
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        error instanceof Error ? `Could not create Jira issue: ${error.message}` : "Could not create Jira issue.",
+        logger
+      );
     }
-
-    await client.chat.postMessage({
-      channel: body.user.id,
-      text: `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`
-    });
-
-    logger.info(`Created Jira issue ${issue.key}`);
   });
 }

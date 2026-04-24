@@ -15,6 +15,8 @@ export interface CreateIssueInput {
   summary: string;
   details: string;
   requesterName?: string;
+  blockerType?: "Customer" | "Operations" | "Environmental" | "Other";
+  opsDowntimeHours?: number;
 }
 
 export interface EpicOption {

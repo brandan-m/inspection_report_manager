@@ -23,6 +23,16 @@ function issueTypeOptions(workflow: WorkflowDefinition): PlainTextOption[] {
   }));
 }
 
+function blockerTypeOptions(): PlainTextOption[] {
+  return ["Customer", "Operations", "Environmental", "Other"].map((value) => ({
+    text: {
+      type: "plain_text",
+      text: value
+    },
+    value
+  }));
+}
+
 export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
   const blocks: KnownBlock[] = [
     {
@@ -81,6 +91,41 @@ export function buildCreateIssueModal(defaultWorkflow: WorkflowDefinition) {
       label: {
         type: "plain_text",
         text: "Issue Type"
+      }
+    },
+    {
+      type: "input",
+      block_id: CALLBACKS.blockerTypeBlock,
+      optional: true,
+      element: {
+        type: "static_select",
+        action_id: CALLBACKS.blockerTypeAction,
+        placeholder: {
+          type: "plain_text",
+          text: "Required for Reporting/Job Board Bugs"
+        },
+        options: blockerTypeOptions()
+      },
+      label: {
+        type: "plain_text",
+        text: "RUG Blocker Type"
+      }
+    },
+    {
+      type: "input",
+      block_id: CALLBACKS.downtimeBlock,
+      optional: true,
+      element: {
+        type: "plain_text_input",
+        action_id: CALLBACKS.downtimeAction,
+        placeholder: {
+          type: "plain_text",
+          text: "Required for Reporting/Job Board Bugs"
+        }
+      },
+      label: {
+        type: "plain_text",
+        text: "RUG Ops Downtime (hours)"
       }
     },
     {

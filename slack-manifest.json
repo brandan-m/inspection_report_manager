@@ -32,7 +32,8 @@
         "chat:write",
         "channels:join",
         "channels:read",
-        "commands"
+        "commands",
+        "im:write"
       ]
     }
   },
