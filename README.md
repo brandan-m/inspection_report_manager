@@ -42,6 +42,8 @@ The repo currently includes:
 - `src/types/`: shared types
 - `config/workflows.json`: workflow routing config
 - `slack-manifest.json`: starter Slack app manifest
+- `.github/workflows/deploy-prod.yml`: production deployment workflow scaffold
+- `Makefile`: image-tag helper used by the GitHub deploy workflow
 
 ## Local Setup
 
@@ -185,6 +187,8 @@ The repo now also includes:
 - [.deploy/cloud-run/values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/values.yaml)
 - [.deploy/cloud-run/dev.values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/dev.values.yaml)
 - [.deploy/cloud-run/prod.values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/prod.values.yaml)
+- [.github/workflows/deploy-prod.yml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.github/workflows/deploy-prod.yml)
+- [Makefile](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/Makefile)
 
 This mirrors the `.deploy/cloud-run` structure you were shown from the internal `conduit-api` example so a platform owner can deploy this app into the existing Google Cloud process.
 
@@ -195,6 +199,10 @@ Open items to confirm with your cloud/platform team:
 - whether `JIRA_EMAIL`, `JIRA_BASE_URL`, and `SLACK_TEST_CHANNEL_ID` should remain secrets or become plain environment variables
 - whether the secret names in `values.yaml` match your org’s actual Secret Manager entries
 - whether the service name should remain `inspection-report-manager`
+- whether the Artifact Registry image naming pattern in the `Makefile` matches your org’s standard
+- whether the GitHub Actions runner label should remain `ubuntu-large`
+
+The Terraform `projects/operations/main.tf` changes do not belong in this application repo. A handoff-friendly starter snippet now lives at [docs/cloud-run-infra-snippet.tf](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/docs/cloud-run-infra-snippet.tf) so your platform team can adapt it inside the shared infrastructure repository.
 
 ### Render Example
 
