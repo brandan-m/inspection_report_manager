@@ -177,6 +177,25 @@ docker run --env-file .env -p 3000:3000 gecko-reporting-workflow
 
 If your host platform deploys containers directly, you can use this Dockerfile instead of the Render-native `render.yaml`.
 
+### Google Cloud Run Scaffolding
+
+The repo now also includes:
+
+- [.deploy/cloud-run/Chart.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/Chart.yaml)
+- [.deploy/cloud-run/values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/values.yaml)
+- [.deploy/cloud-run/dev.values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/dev.values.yaml)
+- [.deploy/cloud-run/prod.values.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/.deploy/cloud-run/prod.values.yaml)
+
+This mirrors the `.deploy/cloud-run` structure you were shown from the internal `conduit-api` example so a platform owner can deploy this app into the existing Google Cloud process.
+
+Open items to confirm with your cloud/platform team:
+
+- whether `project_name: operations` is the correct GCP project target
+- whether `region: us-east1` is correct for this service
+- whether `JIRA_EMAIL`, `JIRA_BASE_URL`, and `SLACK_TEST_CHANNEL_ID` should remain secrets or become plain environment variables
+- whether the secret names in `values.yaml` match your org’s actual Secret Manager entries
+- whether the service name should remain `inspection-report-manager`
+
 ### Render Example
 
 The repo now includes [render.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/render.yaml) for a simple Render deployment using Socket Mode.

@@ -1,0 +1,7 @@
+environment: prod
+
+autoscaling:
+  minReplicas: 1
+
+podAnnotations:
+  run.googleapis.com/cpu-throttling: "false"
