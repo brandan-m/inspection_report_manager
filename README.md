@@ -146,12 +146,7 @@ For a local smoke test:
 
 ## Deployment Notes
 
-For a persistent deployment, move the app off a laptop and into a long-running environment such as:
-
-- Render
-- Railway
-- Fly.io
-- an internal container or VM
+- move to Gecko GCP in Operations PROD
 
 Deployment checklist:
 
@@ -204,26 +199,6 @@ Open items to confirm with your cloud/platform team:
 
 The Terraform `projects/operations/main.tf` changes do not belong in this application repo. A handoff-friendly starter snippet now lives at [docs/cloud-run-infra-snippet.tf](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/docs/cloud-run-infra-snippet.tf) so your platform team can adapt it inside the shared infrastructure repository.
 
-### Render Example
-
-The repo now includes [render.yaml](/Users/brandan.moretton/Documents/New%20project/gecko_reporting_workflow/render.yaml) for a simple Render deployment using Socket Mode.
-
-To deploy on Render:
-
-1. Create a new Web Service from the GitHub repo
-2. Let Render detect `render.yaml`, or point it at that file
-3. Set the secret env vars in Render:
-   - `SLACK_BOT_TOKEN`
-   - `SLACK_SIGNING_SECRET`
-   - `SLACK_APP_TOKEN`
-   - `SLACK_TEST_CHANNEL_ID`
-   - `JIRA_BASE_URL`
-   - `JIRA_EMAIL`
-   - `JIRA_API_TOKEN`
-4. Deploy
-5. After the service is live, confirm the Slack app still works from App Home
-
-Because the app is using Socket Mode, you do not need a public Slack events URL for this deployment model.
 
 ### Production Checklist
 
