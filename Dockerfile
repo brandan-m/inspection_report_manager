@@ -1,12 +1,29 @@
 ARG APP_HOME=/app
+ARG ARTIFACTORY_URL=https://geckorobotics.jfrog.io/artifactory/api/npm/npm/
+ARG ARTIFACTORY_USER
+ARG ARTIFACTORY_PASS
+ARG ARTIFACTORY_EMAIL
 
 FROM node:20-slim AS build
 
 ARG APP_HOME
+ARG ARTIFACTORY_URL
+ARG ARTIFACTORY_USER
+ARG ARTIFACTORY_PASS
+ARG ARTIFACTORY_EMAIL
 WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci
+RUN ENCODED_PASS="$(printf '%s' "${ARTIFACTORY_PASS}" | base64 | tr -d '\n')" \
+    && cat > /root/.npmrc <<EOF
+registry=${ARTIFACTORY_URL}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true
+EOF
+    && npm ci \
+    && rm /root/.npmrc
 
 COPY src ./src
 COPY config ./config
@@ -17,10 +34,23 @@ FROM node:20-slim AS runtime
 ENV NODE_ENV=production
 
 ARG APP_HOME
+ARG ARTIFACTORY_URL
+ARG ARTIFACTORY_USER
+ARG ARTIFACTORY_PASS
+ARG ARTIFACTORY_EMAIL
 WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN ENCODED_PASS="$(printf '%s' "${ARTIFACTORY_PASS}" | base64 | tr -d '\n')" \
+    && cat > /root/.npmrc <<EOF
+registry=${ARTIFACTORY_URL}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}
+//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true
+EOF
+    && npm ci --omit=dev \
+    && rm /root/.npmrc
 
 COPY --from=build ${APP_HOME}/dist ./dist
 COPY --from=build ${APP_HOME}/config ./config
