@@ -13,6 +13,7 @@ env:
   PROJECT_NAME: operations
   ENVIRONMENT: prod
   REGION: us-east1
+  APPLICATION: inspection-report-manager
 
 jobs:
   deploy:
