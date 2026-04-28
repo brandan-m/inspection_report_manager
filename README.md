@@ -4,6 +4,8 @@
 
 The repository is structured so additional Jira workflows, boards, or filter-backed scopes can be added later without changing the core Slack handling flow.
 
+Production deployment is triggered from a semver release tag after the repository checks pass.
+
 ## What It Does
 
 - Opens a Slack modal from a shortcut or App Home flow
