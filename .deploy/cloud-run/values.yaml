@@ -15,10 +15,8 @@ resources:
     memory: "512Mi"
 
 environment_variables:
-  - name: NODE_ENV
-    value: production
-  - name: SLACK_USE_SOCKET_MODE
-    value: "true"
+  NODE_ENV: production
+  SLACK_USE_SOCKET_MODE: "true"
 
 environment_variable_secrets:
   - name: SLACK_SIGNING_SECRET
