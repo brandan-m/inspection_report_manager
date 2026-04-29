@@ -22,13 +22,13 @@ environment_variable_secrets:
   - name: SLACK_SIGNING_SECRET
     secret_name: inspection-report-manager-slack-signing-secret
   - name: SLACK_BOT_TOKEN
-    secret_name: slack-bot-token
+    secret_name: inspection-report-manager-slack-bot-token
   - name: SLACK_APP_TOKEN
-    secret_name: slack-app-token
+    secret_name: inspection-report-manager-slack-app-token
   - name: JIRA_API_TOKEN
-    secret_name: jira-api-token
+    secret_name: inspection-report-manager-jira-api-token
   - name: JIRA_EMAIL
-    secret_name: jira-email
+    secret_name: inspection-report-manager-jira-email
   - name: JIRA_BASE_URL
     secret_name: jira-base-url
   - name: SLACK_TEST_CHANNEL_ID
