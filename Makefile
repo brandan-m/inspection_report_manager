@@ -1,8 +1,9 @@
 SERVICE_NAME ?= inspection-report-manager
 PROJECT_NAME ?= operations
+GCP_PROJECT ?= $(if $(filter $(ENVIRONMENT),prod),gecko-prod-operations,gecko-dev-operations)
 REGION ?= us-east1
 RELEASE_VERSION ?= dev
-IMAGE ?= $(REGION)-docker.pkg.dev/$(PROJECT_NAME)/$(SERVICE_NAME)/$(SERVICE_NAME):$(RELEASE_VERSION)
+IMAGE ?= $(REGION)-docker.pkg.dev/$(GCP_PROJECT)/$(SERVICE_NAME)/$(SERVICE_NAME):$(RELEASE_VERSION)
 ARTIFACTORY_URL ?= https://geckorobotics.jfrog.io/artifactory/api/npm/npm/
 
 .PHONY: build tag-image

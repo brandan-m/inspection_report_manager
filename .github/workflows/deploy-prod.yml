@@ -11,6 +11,7 @@ env:
   ARTIFACTORY_EMAIL: ${{ secrets.ARTIFACTORY_EMAIL }}
   ARTIFACTORY_URL: https://geckorobotics.jfrog.io/artifactory/api/npm/npm/
   PROJECT_NAME: operations
+  GCP_PROJECT: gecko-prod-operations
   ENVIRONMENT: prod
   REGION: us-east1
   APPLICATION: inspection-report-manager
