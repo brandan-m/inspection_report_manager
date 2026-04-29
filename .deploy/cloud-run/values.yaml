@@ -16,7 +16,7 @@ resources:
 
 environment_variables:
   NODE_ENV: production
-  SLACK_USE_SOCKET_MODE: "true"
+  SLACK_USE_SOCKET_MODE: "false"
 
 environment_variable_secrets:
   - name: SLACK_SIGNING_SECRET
