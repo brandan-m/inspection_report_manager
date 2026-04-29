@@ -237,17 +237,27 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(selectedWorkflowKey);
 
     const state = getModalStateValues(body.view.state.values);
+    const nextSelectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+      ? state.selectedIssueType
+      : workflow.allowedIssueTypes[0];
 
-    await client.views.update({
-      view_id: body.view.id,
-      hash: body.view.hash,
-      view: buildCreateIssueModal(workflow, {
-        ...state,
-        selectedIssueType: workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
-          ? state.selectedIssueType
-          : workflow.allowedIssueTypes[0]
-      })
-    });
+    logger.info(
+      `Attempting modal workflow update to ${workflow.key} with issueType=${nextSelectedIssueType ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await client.views.update({
+        view_id: body.view.id,
+        hash: body.view.hash,
+        view: buildCreateIssueModal(workflow, {
+          ...state,
+          selectedIssueType: nextSelectedIssueType
+        })
+      });
+    } catch (error) {
+      logger.error(`Failed modal workflow update for workflow ${workflow.key}.`, error);
+      return;
+    }
 
     logger.info(`Updated modal workflow to ${workflow.key}`);
   });
@@ -264,19 +274,30 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(workflowKey);
     const selectedIssueTypeValue = getSelectedOptionValue(body.actions[0]);
     const state = getModalStateValues(body.view.state.values);
-
-    await client.views.update({
-      view_id: body.view.id,
-      hash: body.view.hash,
-      view: buildCreateIssueModal(workflow, {
-        ...state,
-        selectedIssueType: selectedIssueTypeFromValue(selectedIssueTypeValue ?? "Bug")
-      })
-    });
+    const selectedIssueType = selectedIssueTypeFromValue(selectedIssueTypeValue ?? "Bug");
 
     logger.info(
-      `Updated modal issue type for workflow ${workflow.key} to ${selectedIssueTypeValue ?? "Bug"}`
+      `Attempting modal issue type update for workflow ${workflow.key} to ${selectedIssueType} view=${body.view.id}`
     );
+
+    try {
+      await client.views.update({
+        view_id: body.view.id,
+        hash: body.view.hash,
+        view: buildCreateIssueModal(workflow, {
+          ...state,
+          selectedIssueType
+        })
+      });
+    } catch (error) {
+      logger.error(
+        `Failed modal issue type update for workflow ${workflow.key} to ${selectedIssueType}.`,
+        error
+      );
+      return;
+    }
+
+    logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
@@ -284,6 +305,10 @@ export function registerSlackHandlers(app: App): void {
       const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
       const workflow = getWorkflowByKey(workflowKey);
       const query = (body.value ?? "").trim();
+
+      logger.info(
+        `Received Epic lookup request for workflow ${workflow.key} with query="${query}" action=${body.action_id ?? "n/a"}`
+      );
 
       if (!query) {
         await ack({ options: [] });
