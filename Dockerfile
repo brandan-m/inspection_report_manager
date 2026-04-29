@@ -15,13 +15,13 @@ WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json tsconfig.json ./
 RUN ENCODED_PASS="$(printf '%s' "${ARTIFACTORY_PASS}" | base64 | tr -d '\n')" \
-    && cat > /root/.npmrc <<EOF
-registry=${ARTIFACTORY_URL}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true
-EOF
+    && printf '%s\n' \
+      "registry=${ARTIFACTORY_URL}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true" \
+      > /root/.npmrc \
     && npm ci \
     && rm /root/.npmrc
 
@@ -42,13 +42,13 @@ WORKDIR ${APP_HOME}
 
 COPY package.json package-lock.json ./
 RUN ENCODED_PASS="$(printf '%s' "${ARTIFACTORY_PASS}" | base64 | tr -d '\n')" \
-    && cat > /root/.npmrc <<EOF
-registry=${ARTIFACTORY_URL}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}
-//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true
-EOF
+    && printf '%s\n' \
+      "registry=${ARTIFACTORY_URL}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:username=${ARTIFACTORY_USER}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:_password=${ENCODED_PASS}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:email=${ARTIFACTORY_EMAIL}" \
+      "//geckorobotics.jfrog.io/artifactory/api/npm/npm/:always-auth=true" \
+      > /root/.npmrc \
     && npm ci --omit=dev \
     && rm /root/.npmrc
 
