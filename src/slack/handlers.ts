@@ -61,6 +61,7 @@ function getSelectedIssueTypeFromState(
 }
 
 function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["values"]) {
+  const parentEpicSelection = stateValues?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction];
   const blockerTypeValue =
     stateValues?.[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction] &&
     "selected_option" in stateValues[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction]
@@ -77,6 +78,14 @@ function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["va
 
   return {
     selectedIssueType: getSelectedIssueTypeFromState(stateValues),
+    parentEpicKey:
+      parentEpicSelection && "selected_option" in parentEpicSelection
+        ? parentEpicSelection.selected_option?.value ?? undefined
+        : undefined,
+    parentEpicLabel:
+      parentEpicSelection && "selected_option" in parentEpicSelection
+        ? parentEpicSelection.selected_option?.text?.text ?? undefined
+        : undefined,
     summary:
       stateValues?.[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in stateValues[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
