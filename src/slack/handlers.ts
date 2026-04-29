@@ -242,22 +242,27 @@ export function registerSlackHandlers(app: App): void {
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
-    const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
-    const workflow = getWorkflowByKey(workflowKey);
-    const query = body.value ?? "";
-    const epics = await searchEpics(workflow, query);
+    try {
+      const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
+      const workflow = getWorkflowByKey(workflowKey);
+      const query = body.value ?? "";
+      const epics = await searchEpics(workflow, query);
 
-    await ack({
-      options: epics.map((epic) => ({
-        text: {
-          type: "plain_text",
-          text: `${epic.key} - ${epic.summary}`.slice(0, 75)
-        },
-        value: epic.key
-      }))
-    });
+      await ack({
+        options: epics.map((epic) => ({
+          text: {
+            type: "plain_text",
+            text: `${epic.key} - ${epic.summary}`.slice(0, 75)
+          },
+          value: epic.key
+        }))
+      });
 
-    logger.info(`Returned ${epics.length} Epic options for workflow ${workflow.key}`);
+      logger.info(`Returned ${epics.length} Epic options for workflow ${workflow.key}`);
+    } catch (error) {
+      logger.error("Failed to load Epic options.", error);
+      await ack({ options: [] });
+    }
   });
 
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
