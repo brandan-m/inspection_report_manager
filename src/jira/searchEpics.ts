@@ -47,3 +47,5 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     summary: issue.fields.summary
   }));
 }
+
+export { buildEpicSearchJql };

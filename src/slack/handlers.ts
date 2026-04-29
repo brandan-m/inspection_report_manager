@@ -2,7 +2,7 @@ import type { App, BlockAction, BlockSuggestion, ViewSubmitAction } from "@slack
 import { getWorkflowByKey, listWorkflows } from "../config/workflows.js";
 import { env } from "../config/env.js";
 import { createIssue } from "../jira/createIssue.js";
-import { searchEpics } from "../jira/searchEpics.js";
+import { buildEpicSearchJql, searchEpics } from "../jira/searchEpics.js";
 import type { BlockerType } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
@@ -245,7 +245,15 @@ export function registerSlackHandlers(app: App): void {
     try {
       const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
       const workflow = getWorkflowByKey(workflowKey);
-      const query = body.value ?? "";
+      const query = (body.value ?? "").trim();
+
+      if (!query) {
+        await ack({ options: [] });
+        logger.info(`Skipped Epic lookup for workflow ${workflow.key} because the query was empty.`);
+        return;
+      }
+
+      const jql = buildEpicSearchJql(workflow, query);
       const epics = await searchEpics(workflow, query);
 
       await ack({
@@ -258,9 +266,11 @@ export function registerSlackHandlers(app: App): void {
         }))
       });
 
-      logger.info(`Returned ${epics.length} Epic options for workflow ${workflow.key}`);
+      logger.info(
+        `Returned ${epics.length} Epic options for workflow ${workflow.key} using JQL: ${jql}`
+      );
     } catch (error) {
-      logger.error("Failed to load Epic options.", error);
+      logger.error(`Failed to load Epic options for query "${body.value ?? ""}".`, error);
       await ack({ options: [] });
     }
   });
