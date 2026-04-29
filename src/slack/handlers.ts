@@ -152,6 +152,22 @@ async function trySendDirectMessage(
 }
 
 export function registerSlackHandlers(app: App): void {
+  app.use(async ({ body, next, logger }) => {
+    const payload = body as {
+      type?: string;
+      callback_id?: string;
+      actions?: Array<{ action_id?: string }>;
+    };
+
+    logger.info(
+      `Incoming Slack payload type=${payload.type ?? "unknown"} callback_id=${
+        payload.callback_id ?? "n/a"
+      } action_ids=${payload.actions?.map((action) => action.action_id ?? "unknown").join(",") ?? "none"}`
+    );
+
+    await next();
+  });
+
   app.event("app_home_opened", async ({ event, client, logger }) => {
     await client.views.publish({
       user_id: event.user,
