@@ -11,6 +11,19 @@ import {
   selectedIssueTypeFromValue
 } from "./modal.js";
 
+function getSelectedOptionValue(
+  action:
+    | BlockAction["actions"][number]
+    | ViewSubmitAction["view"]["state"]["values"][string][string]
+    | undefined
+): string | undefined {
+  if (!action || !("selected_option" in action)) {
+    return undefined;
+  }
+
+  return action.selected_option?.value;
+}
+
 function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
   return view?.private_metadata || undefined;
 }
@@ -18,11 +31,10 @@ function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): s
 function getSelectedWorkflowKeyFromState(
   stateValues?: ViewSubmitAction["view"]["state"]["values"]
 ): string {
-  const selected = stateValues?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction] as
-    | { selected_option?: { value?: string } }
-    | undefined;
-
-  return selected?.selected_option?.value ?? listWorkflows()[0].key;
+  return (
+    getSelectedOptionValue(stateValues?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction]) ??
+    listWorkflows()[0].key
+  );
 }
 
 function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
@@ -32,21 +44,20 @@ function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
     return metadataWorkflowKey;
   }
 
-  const selected = body.view?.state.values?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction] as
-    | { selected_option?: { value?: string } }
-    | undefined;
-
-  return selected?.selected_option?.value ?? listWorkflows()[0].key;
+  return (
+    getSelectedOptionValue(
+      body.view?.state.values?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction]
+    ) ?? listWorkflows()[0].key
+  );
 }
 
 function getSelectedIssueTypeFromState(
   stateValues?: ViewSubmitAction["view"]["state"]["values"]
 ): Exclude<"Bug" | "EOD Report" | "Epic", "Epic"> {
-  const selected = stateValues?.[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction] as
-    | { selected_option?: { value?: string } }
-    | undefined;
-
-  return selectedIssueTypeFromValue(selected?.selected_option?.value ?? "Bug");
+  return selectedIssueTypeFromValue(
+    getSelectedOptionValue(stateValues?.[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction]) ??
+      "Bug"
+  );
 }
 
 function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["values"]) {
@@ -216,10 +227,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    const selectedWorkflowKey =
-      body.actions[0] && "selected_option" in body.actions[0]
-        ? body.actions[0].selected_option?.value
-        : undefined;
+    const selectedWorkflowKey = getSelectedOptionValue(body.actions[0]);
 
     if (!selectedWorkflowKey) {
       logger.error("Workflow selection action did not include a selected workflow.");
@@ -228,10 +236,17 @@ export function registerSlackHandlers(app: App): void {
 
     const workflow = getWorkflowByKey(selectedWorkflowKey);
 
+    const state = getModalStateValues(body.view.state.values);
+
     await client.views.update({
       view_id: body.view.id,
       hash: body.view.hash,
-      view: buildCreateIssueModal(workflow, getModalStateValues(body.view.state.values))
+      view: buildCreateIssueModal(workflow, {
+        ...state,
+        selectedIssueType: workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+          ? state.selectedIssueType
+          : workflow.allowedIssueTypes[0]
+      })
     });
 
     logger.info(`Updated modal workflow to ${workflow.key}`);
@@ -247,14 +262,21 @@ export function registerSlackHandlers(app: App): void {
 
     const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
     const workflow = getWorkflowByKey(workflowKey);
+    const selectedIssueTypeValue = getSelectedOptionValue(body.actions[0]);
+    const state = getModalStateValues(body.view.state.values);
 
     await client.views.update({
       view_id: body.view.id,
       hash: body.view.hash,
-      view: buildCreateIssueModal(workflow, getModalStateValues(body.view.state.values))
+      view: buildCreateIssueModal(workflow, {
+        ...state,
+        selectedIssueType: selectedIssueTypeFromValue(selectedIssueTypeValue ?? "Bug")
+      })
     });
 
-    logger.info(`Updated modal issue type for workflow ${workflow.key}`);
+    logger.info(
+      `Updated modal issue type for workflow ${workflow.key} to ${selectedIssueTypeValue ?? "Bug"}`
+    );
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
