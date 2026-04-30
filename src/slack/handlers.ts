@@ -167,7 +167,7 @@ async function trySendDirectMessage(
   try {
     await sendDirectMessage(client, userId, text);
   } catch (error) {
-    logger.warn("Could not send DM confirmation.", error);
+    logger.warn(`Could not send DM confirmation: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -455,7 +455,11 @@ export function registerSlackHandlers(app: App): void {
         logger
       );
     } catch (error) {
-      logger.error(error);
+      logger.error(
+        `Could not create Jira issue for workflow ${workflow.key} issueType ${selectedIssueType}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       await trySendDirectMessage(
         client,
         body.user.id,
