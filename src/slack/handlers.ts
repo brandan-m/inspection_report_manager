@@ -143,6 +143,49 @@ function buildHomeView() {
   };
 }
 
+function buildChannelEntryMessage() {
+  return [
+    {
+      type: "section" as const,
+      text: {
+        type: "mrkdwn" as const,
+        text:
+          "*Gecko Reporting Workflow*\nUse this button to create Jira Bugs and EOD Reports for API Data Delivery or Reporting/Job Board."
+      }
+    },
+    {
+      type: "actions" as const,
+      elements: [
+        {
+          type: "button" as const,
+          action_id: CALLBACKS.channelOpenButton,
+          text: {
+            type: "plain_text" as const,
+            text: "Create Gecko Report"
+          },
+          style: "primary" as const
+        }
+      ]
+    }
+  ];
+}
+
+async function openCreateIssueModal(
+  client: App["client"],
+  triggerId: string,
+  logger: Pick<Console, "info" | "error">,
+  logContext: string
+) {
+  const defaultWorkflow = listWorkflows()[0];
+
+  await client.views.open({
+    trigger_id: triggerId,
+    view: buildCreateIssueModal(defaultWorkflow)
+  });
+
+  logger.info(logContext);
+}
+
 async function sendDirectMessage(client: App["client"], userId: string, text: string) {
   const conversation = await client.conversations.open({
     users: userId
@@ -167,7 +210,7 @@ async function trySendDirectMessage(
   try {
     await sendDirectMessage(client, userId, text);
   } catch (error) {
-    logger.warn("Could not send DM confirmation.", error);
+    logger.warn(`Could not send DM confirmation: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -199,15 +242,7 @@ export function registerSlackHandlers(app: App): void {
 
   app.shortcut(CALLBACKS.globalShortcut, async ({ ack, body, client, logger }) => {
     await ack();
-
-    const defaultWorkflow = listWorkflows()[0];
-
-    await client.views.open({
-      trigger_id: body.trigger_id,
-      view: buildCreateIssueModal(defaultWorkflow)
-    });
-
-    logger.info(`Opened modal for user ${body.user.id}`);
+    await openCreateIssueModal(client, body.trigger_id, logger, `Opened modal for user ${body.user.id}`);
   });
 
   app.action(CALLBACKS.homeOpenButton, async ({ ack, body, client, logger }) => {
@@ -218,14 +253,44 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    const defaultWorkflow = listWorkflows()[0];
+    await openCreateIssueModal(
+      client,
+      body.trigger_id,
+      logger,
+      `Opened modal from App Home for user ${body.user.id}`
+    );
+  });
 
-    await client.views.open({
-      trigger_id: body.trigger_id,
-      view: buildCreateIssueModal(defaultWorkflow)
-    });
+  app.command("/inspection_report_manager", async ({ ack, body, client, logger }) => {
+    await ack();
 
-    logger.info(`Opened modal from App Home for user ${body.user.id}`);
+    try {
+      await client.chat.postMessage({
+        channel: body.channel_id,
+        text: "Create a Jira report from this channel.",
+        blocks: buildChannelEntryMessage()
+      });
+
+      logger.info(`Posted channel entry message in ${body.channel_id}`);
+    } catch (error) {
+      logger.error(`Could not post channel entry message: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  app.action(CALLBACKS.channelOpenButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("trigger_id" in body)) {
+      logger.error("Channel button interaction did not include a trigger_id.");
+      return;
+    }
+
+    await openCreateIssueModal(
+      client,
+      body.trigger_id,
+      logger,
+      `Opened modal from channel message for user ${body.user.id}`
+    );
   });
 
   app.action(CALLBACKS.workflowAction, async ({ ack, body, client, logger }) => {
@@ -435,11 +500,17 @@ export function registerSlackHandlers(app: App): void {
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
       });
 
+      logger.info(`Created Jira issue ${issue.key}`);
+
       if (env.SLACK_TEST_CHANNEL_ID) {
-        await client.chat.postMessage({
-          channel: env.SLACK_TEST_CHANNEL_ID,
-          text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
-        });
+        try {
+          await client.chat.postMessage({
+            channel: env.SLACK_TEST_CHANNEL_ID,
+            text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
+          });
+        } catch (error) {
+          logger.warn("Could not post Jira issue confirmation to the Slack test channel.", error);
+        }
       }
 
       await trySendDirectMessage(
@@ -448,10 +519,12 @@ export function registerSlackHandlers(app: App): void {
         `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
         logger
       );
-
-      logger.info(`Created Jira issue ${issue.key}`);
     } catch (error) {
-      logger.error(error);
+      logger.error(
+        `Could not create Jira issue for workflow ${workflow.key} issueType ${selectedIssueType}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       await trySendDirectMessage(
         client,
         body.user.id,
