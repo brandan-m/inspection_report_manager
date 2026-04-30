@@ -7,7 +7,7 @@ import type { BlockerType } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
   buildCreateIssueModal,
-  requiresReportingBugFields,
+  requiresBugSpecificFields,
   selectedIssueTypeFromValue
 } from "./modal.js";
 
@@ -391,11 +391,13 @@ export function registerSlackHandlers(app: App): void {
     }
 
     const selectedIssueType = selectedIssueTypeFromValue(issueTypeValue);
-    if (requiresReportingBugFields(workflow, selectedIssueType)) {
+    if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
+      const blockerTypeLabel =
+        workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
 
       if (!blockerTypeValue) {
-        errors[CALLBACKS.blockerTypeBlock] = "Choose a RUG Blocker Type.";
+        errors[CALLBACKS.blockerTypeBlock] = `Choose an ${blockerTypeLabel}.`;
       }
 
       if (!downtimeValue) {

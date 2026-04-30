@@ -43,11 +43,22 @@ export interface ModalStateValues {
   opsDowntimeHours?: string;
 }
 
-function shouldShowReportingBugFields(
-  workflow: WorkflowDefinition,
-  issueType: SelectableIssueType
-): boolean {
-  return workflow.jiraProjectKey === "RB" && issueType === "Bug";
+function requiresBugFields(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
+  return (workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "APIDD") && issueType === "Bug";
+}
+
+function blockerTypeLabel(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
+}
+
+function downtimeLabel(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD" ? "API Ops Downtime (hours)" : "RUG Ops Downtime (hours)";
+}
+
+function bugFieldPlaceholder(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD"
+    ? "Required for API Data Delivery Bugs"
+    : "Required for Reporting/Job Board Bugs";
 }
 
 export function buildCreateIssueModal(
@@ -160,7 +171,7 @@ export function buildCreateIssueModal(
     }
   ];
 
-  if (shouldShowReportingBugFields(defaultWorkflow, selectedIssueType)) {
+  if (requiresBugFields(defaultWorkflow, selectedIssueType)) {
     blocks.splice(3, 0, {
       type: "input",
       block_id: CALLBACKS.blockerTypeBlock,
@@ -178,13 +189,13 @@ export function buildCreateIssueModal(
           : undefined,
         placeholder: {
           type: "plain_text",
-          text: "Required for Reporting/Job Board Bugs"
+          text: bugFieldPlaceholder(defaultWorkflow)
         },
         options: blockerTypeOptions()
       },
       label: {
         type: "plain_text",
-        text: "RUG Blocker Type"
+        text: blockerTypeLabel(defaultWorkflow)
       }
     });
 
@@ -192,17 +203,18 @@ export function buildCreateIssueModal(
       type: "input",
       block_id: CALLBACKS.downtimeBlock,
       element: {
-        type: "plain_text_input",
+        type: "number_input",
         action_id: CALLBACKS.downtimeAction,
+        is_decimal_allowed: true,
         initial_value: state.opsDowntimeHours,
         placeholder: {
           type: "plain_text",
-          text: "Required for Reporting/Job Board Bugs"
+          text: bugFieldPlaceholder(defaultWorkflow)
         }
       },
       label: {
         type: "plain_text",
-        text: "RUG Ops Downtime (hours)"
+        text: downtimeLabel(defaultWorkflow)
       }
     });
   }
@@ -235,9 +247,9 @@ export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssu
   return value;
 }
 
-export function requiresReportingBugFields(
+export function requiresBugSpecificFields(
   workflow: WorkflowDefinition,
   issueType: Exclude<SupportedIssueType, "Epic">
 ): boolean {
-  return shouldShowReportingBugFields(workflow, issueType);
+  return requiresBugFields(workflow, issueType);
 }
