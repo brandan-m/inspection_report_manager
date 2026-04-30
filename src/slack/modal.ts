@@ -43,6 +43,11 @@ export interface ModalStateValues {
   opsDowntimeHours?: string;
 }
 
+export interface ModalMetadata {
+  workflowKey: string;
+  channelId?: string;
+}
+
 function requiresBugFields(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
   return (workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "APIDD") && issueType === "Bug";
 }
@@ -63,7 +68,8 @@ function bugFieldPlaceholder(workflow: WorkflowDefinition): string {
 
 export function buildCreateIssueModal(
   defaultWorkflow: WorkflowDefinition,
-  state: ModalStateValues = {}
+  state: ModalStateValues = {},
+  metadata: Partial<ModalMetadata> = {}
 ) {
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
   const blocks: KnownBlock[] = [
@@ -222,7 +228,10 @@ export function buildCreateIssueModal(
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.createIssueView,
-    private_metadata: defaultWorkflow.key,
+    private_metadata: JSON.stringify({
+      workflowKey: metadata.workflowKey ?? defaultWorkflow.key,
+      channelId: metadata.channelId
+    }),
     title: {
       type: "plain_text" as const,
       text: "Create Gecko Report"
