@@ -319,12 +319,6 @@ export function registerSlackHandlers(app: App): void {
         `Received Epic lookup request for workflow ${workflow.key} with query="${query}" action=${body.action_id ?? "n/a"}`
       );
 
-      if (!query) {
-        await ack({ options: [] });
-        logger.info(`Skipped Epic lookup for workflow ${workflow.key} because the query was empty.`);
-        return;
-      }
-
       const jql = buildEpicSearchJql(workflow, query);
       const epics = await searchEpics(workflow, query);
 
