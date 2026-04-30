@@ -11,6 +11,10 @@ async function main() {
     appToken: env.SLACK_APP_TOKEN
   });
 
+  app.error(async (error) => {
+    console.error("Slack Bolt error", error);
+  });
+
   registerSlackHandlers(app);
 
   if (env.SLACK_USE_SOCKET_MODE) {

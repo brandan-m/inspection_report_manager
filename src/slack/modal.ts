@@ -35,6 +35,8 @@ function blockerTypeOptions(): PlainTextOption[] {
 
 export interface ModalStateValues {
   selectedIssueType?: SelectableIssueType;
+  parentEpicKey?: string;
+  parentEpicLabel?: string;
   summary?: string;
   details?: string;
   blockerType?: BlockerType;
@@ -55,10 +57,13 @@ export function buildCreateIssueModal(
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
   const blocks: KnownBlock[] = [
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.workflowBlock,
-      dispatch_action: true,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Workflow*"
+      },
+      accessory: {
         type: "static_select",
         action_id: CALLBACKS.workflowAction,
         initial_option: {
@@ -69,34 +74,43 @@ export function buildCreateIssueModal(
           value: defaultWorkflow.key
         },
         options: workflowOptions()
-      },
-      label: {
-        type: "plain_text",
-        text: "Workflow"
       }
     },
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.epicBlock,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Parent Epic*"
+      },
+      accessory: {
         type: "external_select",
         action_id: CALLBACKS.epicAction,
         min_query_length: 0,
+        initial_option:
+          state.parentEpicKey && state.parentEpicLabel
+            ? {
+                text: {
+                  type: "plain_text",
+                  text: state.parentEpicLabel.slice(0, 75)
+                },
+                value: state.parentEpicKey
+              }
+            : undefined,
         placeholder: {
           type: "plain_text",
           text: "Search Jira Epics"
         }
-      },
-      label: {
-        type: "plain_text",
-        text: "Parent Epic"
       }
     },
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.issueTypeBlock,
-      dispatch_action: true,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Issue Type*"
+      },
+      accessory: {
         type: "static_select",
         action_id: CALLBACKS.issueTypeAction,
         initial_option: {
@@ -107,10 +121,6 @@ export function buildCreateIssueModal(
           value: selectedIssueType
         },
         options: issueTypeOptions(defaultWorkflow)
-      },
-      label: {
-        type: "plain_text",
-        text: "Issue Type"
       }
     },
     {
