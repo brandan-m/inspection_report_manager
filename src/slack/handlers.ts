@@ -7,6 +7,7 @@ import type { BlockerType } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
   buildCreateIssueModal,
+  type ModalMetadata,
   requiresBugSpecificFields,
   selectedIssueTypeFromValue
 } from "./modal.js";
@@ -24,8 +25,26 @@ function getSelectedOptionValue(
   return action.selected_option?.value;
 }
 
+function parseModalMetadata(view?: { private_metadata?: string }): ModalMetadata | undefined {
+  if (!view?.private_metadata) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(view.private_metadata) as ModalMetadata;
+  } catch {
+    return {
+      workflowKey: view.private_metadata
+    };
+  }
+}
+
 function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
-  return view?.private_metadata || undefined;
+  return parseModalMetadata(view)?.workflowKey;
+}
+
+function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
+  return parseModalMetadata(view)?.channelId;
 }
 
 function getSelectedWorkflowKeyFromState(
@@ -174,13 +193,14 @@ async function openCreateIssueModal(
   client: App["client"],
   triggerId: string,
   logger: Pick<Console, "info" | "error">,
-  logContext: string
+  logContext: string,
+  channelId?: string
 ) {
   const defaultWorkflow = listWorkflows()[0];
 
   await client.views.open({
     trigger_id: triggerId,
-    view: buildCreateIssueModal(defaultWorkflow)
+    view: buildCreateIssueModal(defaultWorkflow, {}, { channelId })
   });
 
   logger.info(logContext);
@@ -261,7 +281,7 @@ export function registerSlackHandlers(app: App): void {
     );
   });
 
-  app.command("/inspection_report_manager", async ({ ack, body, client, logger }) => {
+  app.command("/inspection_report_manager", async ({ ack, body, client, logger, respond }) => {
     await ack();
 
     try {
@@ -274,6 +294,12 @@ export function registerSlackHandlers(app: App): void {
       logger.info(`Posted channel entry message in ${body.channel_id}`);
     } catch (error) {
       logger.error(`Could not post channel entry message: ${error instanceof Error ? error.message : String(error)}`);
+
+      await respond({
+        response_type: "ephemeral",
+        text:
+          "I couldn't post the report button in this channel. If this is a private channel, please invite @Gecko Reporting Workflow first, then try again."
+      });
     }
   });
 
@@ -289,7 +315,8 @@ export function registerSlackHandlers(app: App): void {
       client,
       body.trigger_id,
       logger,
-      `Opened modal from channel message for user ${body.user.id}`
+      `Opened modal from channel message for user ${body.user.id}`,
+      "channel" in body ? body.channel?.id : undefined
     );
   });
 
@@ -326,6 +353,9 @@ export function registerSlackHandlers(app: App): void {
         view: buildCreateIssueModal(workflow, {
           ...state,
           selectedIssueType: nextSelectedIssueType
+        }, {
+          workflowKey: workflow.key,
+          channelId: getChannelIdFromViewMetadata(body.view)
         })
       });
     } catch (error) {
@@ -361,6 +391,9 @@ export function registerSlackHandlers(app: App): void {
         view: buildCreateIssueModal(workflow, {
           ...state,
           selectedIssueType
+        }, {
+          workflowKey: workflow.key,
+          channelId: getChannelIdFromViewMetadata(body.view)
         })
       });
     } catch (error) {
@@ -409,6 +442,7 @@ export function registerSlackHandlers(app: App): void {
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
+    const channelId = getChannelIdFromViewMetadata(view);
     const workflow = getWorkflowByKey(workflowKey);
     const values = view.state.values;
     const parentEpicKey =
@@ -502,14 +536,14 @@ export function registerSlackHandlers(app: App): void {
 
       logger.info(`Created Jira issue ${issue.key}`);
 
-      if (env.SLACK_TEST_CHANNEL_ID) {
+      if (channelId) {
         try {
           await client.chat.postMessage({
-            channel: env.SLACK_TEST_CHANNEL_ID,
+            channel: channelId,
             text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
           });
         } catch (error) {
-          logger.warn("Could not post Jira issue confirmation to the Slack test channel.", error);
+          logger.warn("Could not post Jira issue confirmation to the originating Slack channel.", error);
         }
       }
 
