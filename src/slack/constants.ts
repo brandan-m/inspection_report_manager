@@ -1,6 +1,7 @@
 export const CALLBACKS = {
   globalShortcut: "create_gecko_report",
   homeOpenButton: "open_create_gecko_report_from_home",
+  channelOpenButton: "open_create_gecko_report_from_channel",
   createIssueView: "create_gecko_report_view",
   workflowBlock: "workflow_block",
   workflowAction: "workflow_select",
