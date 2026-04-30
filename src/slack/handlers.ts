@@ -435,11 +435,17 @@ export function registerSlackHandlers(app: App): void {
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
       });
 
+      logger.info(`Created Jira issue ${issue.key}`);
+
       if (env.SLACK_TEST_CHANNEL_ID) {
-        await client.chat.postMessage({
-          channel: env.SLACK_TEST_CHANNEL_ID,
-          text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
-        });
+        try {
+          await client.chat.postMessage({
+            channel: env.SLACK_TEST_CHANNEL_ID,
+            text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
+          });
+        } catch (error) {
+          logger.warn("Could not post Jira issue confirmation to the Slack test channel.", error);
+        }
       }
 
       await trySendDirectMessage(
@@ -448,8 +454,6 @@ export function registerSlackHandlers(app: App): void {
         `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
         logger
       );
-
-      logger.info(`Created Jira issue ${issue.key}`);
     } catch (error) {
       logger.error(error);
       await trySendDirectMessage(
