@@ -93,6 +93,57 @@ function formatJiraErrorMessage(error: unknown): string {
   return error.message.replace(/^Jira request failed \(\d+\):\s*/, "");
 }
 
+function escapeSlackText(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function buildJiraIssueUrl(issueKey: string): string {
+  return new URL(`/browse/${issueKey}`, env.JIRA_BASE_URL).toString();
+}
+
+function getEpicSummaryFromLabel(parentEpicLabel?: string, parentEpicKey?: string): string | undefined {
+  if (!parentEpicLabel || !parentEpicKey) {
+    return undefined;
+  }
+
+  const prefix = `${parentEpicKey} - `;
+  return parentEpicLabel.startsWith(prefix) ? parentEpicLabel.slice(prefix.length) : parentEpicLabel;
+}
+
+function buildIssueConfirmationMessage(input: {
+  issueType: string;
+  requesterId: string;
+  issueKey: string;
+  issueSummary: string;
+  parentEpicKey: string;
+  parentEpicSummary?: string;
+}) {
+  const issueLink = `<${buildJiraIssueUrl(input.issueKey)}|${escapeSlackText(input.issueKey)}>`;
+  const epicLink = `<${buildJiraIssueUrl(input.parentEpicKey)}|${escapeSlackText(input.parentEpicKey)}>`;
+  const epicSummary = input.parentEpicSummary
+    ? ` - ${escapeSlackText(input.parentEpicSummary)}`
+    : "";
+
+  const text =
+    `*${escapeSlackText(input.issueType)} has been filed*\n` +
+    `*Reporter:* <@${input.requesterId}>\n` +
+    `*Issue:* ${issueLink} - ${escapeSlackText(input.issueSummary)}\n` +
+    `*Inspection:* ${epicLink}${epicSummary}`;
+
+  return {
+    text: `${input.issueType} filed: ${input.issueKey} under ${input.parentEpicKey}.`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text
+        }
+      }
+    ]
+  };
+}
+
 function buildHomeView() {
   return {
     type: "home" as const,
@@ -123,7 +174,12 @@ function buildHomeView() {
   };
 }
 
-async function sendDirectMessage(client: App["client"], userId: string, text: string) {
+async function sendDirectMessage(
+  client: App["client"],
+  userId: string,
+  text: string,
+  blocks?: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>
+) {
   const conversation = await client.conversations.open({
     users: userId
   });
@@ -134,7 +190,8 @@ async function sendDirectMessage(client: App["client"], userId: string, text: st
 
   await client.chat.postMessage({
     channel: conversation.channel.id,
-    text
+    text,
+    ...(blocks ? { blocks } : {})
   });
 }
 
@@ -142,10 +199,11 @@ async function trySendDirectMessage(
   client: App["client"],
   userId: string,
   text: string,
+  blocks: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }> | undefined,
   logger: Pick<Console, "warn">
 ) {
   try {
-    await sendDirectMessage(client, userId, text);
+    await sendDirectMessage(client, userId, text, blocks);
   } catch (error) {
     logger.warn("Could not send DM confirmation.", error);
   }
@@ -265,6 +323,11 @@ export function registerSlackHandlers(app: App): void {
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
     const workflow = getWorkflowByKey(workflowKey);
     const values = view.state.values;
+    const parentEpicLabel =
+      values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
+      "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
+        ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.text?.text
+        : undefined;
     const parentEpicKey =
       values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
       "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
@@ -352,17 +415,29 @@ export function registerSlackHandlers(app: App): void {
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
       });
 
+      logger.info(`Created Jira issue ${issue.key}`);
+
+      const confirmationMessage = buildIssueConfirmationMessage({
+        issueType: selectedIssueType,
+        requesterId: body.user.id,
+        issueKey: issue.key,
+        issueSummary: summary,
+        parentEpicKey,
+        parentEpicSummary: getEpicSummaryFromLabel(parentEpicLabel, parentEpicKey)
+      });
+
       if (env.SLACK_TEST_CHANNEL_ID) {
         await client.chat.postMessage({
           channel: env.SLACK_TEST_CHANNEL_ID,
-          text: `Created Jira issue ${issue.key} in ${workflow.label} under Epic ${parentEpicKey}.`
+          ...confirmationMessage
         });
       }
 
       await trySendDirectMessage(
         client,
         body.user.id,
-        `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
+        confirmationMessage.text,
+        confirmationMessage.blocks,
         logger
       );
 
@@ -373,6 +448,7 @@ export function registerSlackHandlers(app: App): void {
         client,
         body.user.id,
         `Could not create Jira issue: ${formatJiraErrorMessage(error)}`,
+        undefined,
         logger
       );
     }
