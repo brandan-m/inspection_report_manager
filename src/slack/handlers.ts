@@ -240,9 +240,9 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
             action_id: CALLBACKS.eodStartButton,
             text: {
               type: "plain_text" as const,
-              text: "Complete EOD Intake"
+              text: "Generate EOD Report"
             },
-            style: "primary" as const,
+            style: "danger" as const,
             value: JSON.stringify(context)
           }
         ]
@@ -264,7 +264,7 @@ function buildEodCompletionMessage(input: {
     getParentInspectionLabel(input.context)
   );
   const lines = [
-    `*Complete EOD Intake*`,
+    `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
     `*Parent Inspection:* ${parentInspection}`,
     `*Submitted by:* <@${input.requesterId}>`,
@@ -290,7 +290,7 @@ function buildEodCompletionMessage(input: {
   }
 
   return {
-    text: `Complete EOD Intake submitted: ${input.issueKey} for ${input.context.parentEpicKey}.`,
+    text: `EOD Report generated: ${input.issueKey} for ${input.context.parentEpicKey}.`,
     blocks: [
       {
         type: "section" as const,
@@ -988,7 +988,7 @@ export function registerSlackHandlers(app: App): void {
         await trySendDirectMessage(
           client,
           body.user.id,
-          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Complete EOD Intake" to finish the Jira issue.`,
+          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.`,
           undefined,
           logger
         );
