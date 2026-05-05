@@ -10,6 +10,8 @@ interface JiraSearchResponse {
   }>;
 }
 
+let jiraSearchPath: "/rest/api/3/search/jql" | "/rest/api/3/search" = "/rest/api/3/search/jql";
+
 export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
   const escaped = query.replace(/"/g, '\\"').trim();
 
@@ -31,11 +33,16 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
   let result: JiraSearchResponse;
 
   try {
-    result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search/jql", {
+    result = await jiraRequest<JiraSearchResponse>(jiraSearchPath, {
       method: "POST",
       body: JSON.stringify(payload)
     });
   } catch {
+    if (jiraSearchPath === "/rest/api/3/search") {
+      throw new Error(`Jira Epic search failed using ${jiraSearchPath}.`);
+    }
+
+    jiraSearchPath = "/rest/api/3/search";
     result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search", {
       method: "POST",
       body: JSON.stringify(payload)
