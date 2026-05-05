@@ -58,6 +58,7 @@ export interface EodReportFormValues {
 export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
+  parentEpicLabel?: string;
   requesterId: string;
   channelId: string;
   threadTs: string;

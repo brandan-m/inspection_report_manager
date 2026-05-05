@@ -17,7 +17,6 @@ import {
   buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
-  buildEodThreadStartBlocks,
   decodeEodThreadContext,
   formatEodReportDetails,
   type ModalMetadata,
@@ -198,6 +197,11 @@ function buildJiraIssueUrl(issueKey: string): string {
   return new URL(`/browse/${issueKey}`, env.JIRA_BASE_URL).toString();
 }
 
+function buildLinkedJiraLabel(issueKey: string, label?: string): string {
+  const linkText = label?.trim() || issueKey;
+  return `<${buildJiraIssueUrl(issueKey)}|${escapeSlackText(linkText)}>`;
+}
+
 function getEpicSummaryFromLabel(parentEpicLabel?: string, parentEpicKey?: string): string | undefined {
   if (!parentEpicLabel || !parentEpicKey) {
     return undefined;
@@ -205,6 +209,98 @@ function getEpicSummaryFromLabel(parentEpicLabel?: string, parentEpicKey?: strin
 
   const prefix = `${parentEpicKey} - `;
   return parentEpicLabel.startsWith(prefix) ? parentEpicLabel.slice(prefix.length) : parentEpicLabel;
+}
+
+function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey" | "parentEpicLabel">): string {
+  return context.parentEpicLabel?.trim() || context.parentEpicKey;
+}
+
+function buildEodThreadStartMessage(context: EodThreadContext) {
+  const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
+  const text =
+    `*EOD Intake :thread:*\n` +
+    `*Parent Inspection:* ${parentInspection}\n` +
+    `*Created by:* <@${context.requesterId}>`;
+
+  return {
+    text: `EOD intake started for ${context.parentEpicKey}.`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text
+        }
+      },
+      {
+        type: "actions" as const,
+        elements: [
+          {
+            type: "button" as const,
+            action_id: CALLBACKS.eodStartButton,
+            text: {
+              type: "plain_text" as const,
+              text: "Complete EOD Intake"
+            },
+            style: "primary" as const,
+            value: JSON.stringify(context)
+          }
+        ]
+      }
+    ]
+  };
+}
+
+function buildEodCompletionMessage(input: {
+  issueKey: string;
+  issueSummary: string;
+  requesterId: string;
+  context: EodThreadContext;
+  values: EodReportFormValues;
+}) {
+  const issueLink = buildLinkedJiraLabel(input.issueKey, input.issueKey);
+  const parentInspection = buildLinkedJiraLabel(
+    input.context.parentEpicKey,
+    getParentInspectionLabel(input.context)
+  );
+  const lines = [
+    `*Complete EOD Intake*`,
+    `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
+    `*Parent Inspection:* ${parentInspection}`,
+    `*Submitted by:* <@${input.requesterId}>`,
+    `*Date:* ${escapeSlackText(input.values.date)}`,
+    `*Asset Type:* ${escapeSlackText(input.values.assetType)}`,
+    `*Asset Number:* ${escapeSlackText(input.values.assetNumber)}`,
+    `*Crew On-Site:* ${escapeSlackText(input.values.crewOnSite)}`,
+    `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
+    `*Permit Approved:* ${escapeSlackText(input.values.permitApproved)}`,
+    `*Calibration Completed:* ${escapeSlackText(input.values.calibrationCompleted)}`,
+    `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
+    `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`,
+    `*Scanning Area Coverage:* ${String(input.values.scanningAreaCoverage)}`,
+    `*Covered Area Units:* ${escapeSlackText(input.values.coveredAreaUnits)}`,
+    `*Data Upload Status:* ${escapeSlackText(input.values.dataUploadStatus)}`,
+    `*Data Validation Status:* ${escapeSlackText(input.values.dataValidationStatus)}`,
+    `*Report Status:* ${escapeSlackText(input.values.reportStatus)}`,
+    `*Crew Off-Site:* ${escapeSlackText(input.values.crewOffSite)}`
+  ];
+
+  if (input.values.notes?.trim()) {
+    lines.push(`*Notes:* ${escapeSlackText(input.values.notes.trim())}`);
+  }
+
+  return {
+    text: `Complete EOD Intake submitted: ${input.issueKey} for ${input.context.parentEpicKey}.`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: lines.join("\n")
+        }
+      }
+    ]
+  };
 }
 
 function buildIssueConfirmationMessage(input: {
@@ -383,12 +479,13 @@ async function createEodThread(
     ...context,
     threadTs: starter.ts
   };
+  const starterMessage = buildEodThreadStartMessage(threadContext);
 
   await client.chat.update({
     channel: context.channelId,
     ts: starter.ts,
-    text: starterText,
-    blocks: buildEodThreadStartBlocks(threadContext)
+    text: starterMessage.text,
+    blocks: starterMessage.blocks
   });
 
   return threadContext;
@@ -883,6 +980,7 @@ export function registerSlackHandlers(app: App): void {
         const threadContext = await createEodThread(client, {
           workflowKey: workflow.key,
           parentEpicKey,
+          parentEpicLabel,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
@@ -995,11 +1093,18 @@ export function registerSlackHandlers(app: App): void {
         details,
         requesterName: body.user.id
       });
+      const completionMessage = buildEodCompletionMessage({
+        issueKey: issue.key,
+        issueSummary: summary,
+        requesterId: body.user.id,
+        context,
+        values: validation.values
+      });
 
       await client.chat.postMessage({
         channel: context.channelId,
         thread_ts: context.threadTs,
-        text: `Created Jira issue ${issue.key} for ${context.parentEpicKey}.`
+        ...completionMessage
       });
 
       await trySendDirectMessage(

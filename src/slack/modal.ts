@@ -328,40 +328,16 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
   return {
     workflowKey: parsed.workflowKey,
     parentEpicKey: parsed.parentEpicKey,
+    parentEpicLabel: parsed.parentEpicLabel,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs
   };
 }
 
-export function buildEodThreadStartBlocks(context: EodThreadContext): KnownBlock[] {
-  return [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*EOD intake started*\n*Parent Epic:* ${context.parentEpicKey}\n*Requested by:* <@${context.requesterId}>`
-      }
-    },
-    {
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          action_id: CALLBACKS.eodStartButton,
-          text: {
-            type: "plain_text",
-            text: "Complete EOD Intake"
-          },
-          style: "primary",
-          value: encodeEodThreadContext(context)
-        }
-      ]
-    }
-  ];
-}
-
 export function buildEodReportModal(context: EodThreadContext) {
+  const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
+
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.eodReportView,
@@ -383,7 +359,7 @@ export function buildEodReportModal(context: EodThreadContext) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Parent Epic:* ${context.parentEpicKey}`
+          text: `*Parent Inspection:* ${parentInspectionLabel}`
         }
       },
       {
