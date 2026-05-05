@@ -23,7 +23,7 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
   "Other"
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
-const EOD_COVERAGE_UNITS: EodCoverageUnit[] = ["sq ft", "sq m", "acres", "hectares"];
+const EOD_COVERAGE_UNITS: EodCoverageUnit[] = ["ft^2", "m^2"];
 const EOD_STATUSES: EodStatus[] = ["Not Started", "In Progress", "Complete", "Blocked"];
 
 function workflowOptions(): PlainTextOption[] {
@@ -220,14 +220,7 @@ export function buildCreateIssueModal(
         },
         options: issueTypeOptions(defaultWorkflow)
       }
-    },
-    plainTextInputBlock(
-      CALLBACKS.summaryBlock,
-      CALLBACKS.summaryAction,
-      "Summary",
-      "Short issue summary",
-      state.summary
-    )
+    }
   ];
 
   if (requiresBugFields(defaultWorkflow, selectedIssueType)) {
@@ -281,6 +274,13 @@ export function buildCreateIssueModal(
   if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
+        CALLBACKS.summaryBlock,
+        CALLBACKS.summaryAction,
+        "Summary",
+        "Short issue summary",
+        state.summary
+      ),
+      plainTextInputBlock(
         CALLBACKS.detailsBlock,
         CALLBACKS.detailsAction,
         "Details",
@@ -321,21 +321,13 @@ export function encodeEodThreadContext(context: EodThreadContext): string {
 export function decodeEodThreadContext(value: string): EodThreadContext {
   const parsed = JSON.parse(value) as Partial<EodThreadContext>;
 
-  if (
-    !parsed.workflowKey ||
-    !parsed.parentEpicKey ||
-    !parsed.summary ||
-    !parsed.requesterId ||
-    !parsed.channelId ||
-    !parsed.threadTs
-  ) {
+  if (!parsed.workflowKey || !parsed.parentEpicKey || !parsed.requesterId || !parsed.channelId || !parsed.threadTs) {
     throw new Error("EOD thread context is incomplete.");
   }
 
   return {
     workflowKey: parsed.workflowKey,
     parentEpicKey: parsed.parentEpicKey,
-    summary: parsed.summary,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs
@@ -348,7 +340,7 @@ export function buildEodThreadStartBlocks(context: EodThreadContext): KnownBlock
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*EOD intake started*\n*Parent Epic:* ${context.parentEpicKey}\n*Summary:* ${context.summary}\n*Requested by:* <@${context.requesterId}>`
+        text: `*EOD intake started*\n*Parent Epic:* ${context.parentEpicKey}\n*Requested by:* <@${context.requesterId}>`
       }
     },
     {
@@ -391,7 +383,7 @@ export function buildEodReportModal(context: EodThreadContext) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Parent Epic:* ${context.parentEpicKey}\n*Summary:* ${context.summary}`
+          text: `*Parent Epic:* ${context.parentEpicKey}`
         }
       },
       {
@@ -464,24 +456,57 @@ export function buildEodReportModal(context: EodThreadContext) {
         "Calibration Completed",
         "Calibration completion detail"
       ),
-      plainTextInputBlock(
-        CALLBACKS.eodScansCompletedBlock,
-        CALLBACKS.eodScansCompletedAction,
-        "Number of Scans Completed",
-        "0"
-      ),
-      plainTextInputBlock(
-        CALLBACKS.eodScanningTimeBlock,
-        CALLBACKS.eodScanningTimeAction,
-        "Total Scanning Time (Hours)",
-        "0"
-      ),
-      plainTextInputBlock(
-        CALLBACKS.eodCoverageBlock,
-        CALLBACKS.eodCoverageAction,
-        "Scanning Area Coverage",
-        "0"
-      ),
+      {
+        type: "input",
+        block_id: CALLBACKS.eodScansCompletedBlock,
+        element: {
+          type: "number_input",
+          action_id: CALLBACKS.eodScansCompletedAction,
+          is_decimal_allowed: false,
+          placeholder: {
+            type: "plain_text",
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text",
+          text: "Number of Scans Completed"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodScanningTimeBlock,
+        element: {
+          type: "number_input",
+          action_id: CALLBACKS.eodScanningTimeAction,
+          is_decimal_allowed: true,
+          placeholder: {
+            type: "plain_text",
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text",
+          text: "Total Scanning Time (Hours)"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodCoverageBlock,
+        element: {
+          type: "number_input",
+          action_id: CALLBACKS.eodCoverageAction,
+          is_decimal_allowed: true,
+          placeholder: {
+            type: "plain_text",
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text",
+          text: "Scanning Area Coverage"
+        }
+      },
       {
         type: "input",
         block_id: CALLBACKS.eodCoverageUnitsBlock,
@@ -593,6 +618,10 @@ export function formatEodReportDetails(values: EodReportFormValues): string {
   }
 
   return lines.join("\n");
+}
+
+export function buildEodReportSummary(values: EodReportFormValues): string {
+  return `${values.date} ${values.assetType} ${values.assetNumber} EOD Report`;
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {
