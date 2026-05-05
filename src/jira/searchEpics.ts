@@ -10,7 +10,7 @@ interface JiraSearchResponse {
   }>;
 }
 
-function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
+export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
   const escaped = query.replace(/"/g, '\\"').trim();
 
   if (!escaped) {
@@ -47,5 +47,3 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     summary: issue.fields.summary
   }));
 }
-
-export { buildEpicSearchJql };

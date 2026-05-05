@@ -13,6 +13,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === "true"),
+  SLACK_EOD_CHANNEL_ID: z.string().optional(),
   SLACK_TEST_CHANNEL_ID: z.string().optional(),
   JIRA_BASE_URL: z.string().url(),
   JIRA_EMAIL: z.string().email(),

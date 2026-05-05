@@ -3,14 +3,30 @@ import { getWorkflowByKey, listWorkflows } from "../config/workflows.js";
 import { env } from "../config/env.js";
 import { createIssue } from "../jira/createIssue.js";
 import { buildEpicSearchJql, searchEpics } from "../jira/searchEpics.js";
-import type { BlockerType } from "../types/workflow.js";
+import type {
+  BlockerType,
+  EodAssetType,
+  EodCoverageUnit,
+  EodReportFormValues,
+  EodStatus,
+  EodThreadContext,
+  EodYesNo
+} from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
   buildCreateIssueModal,
+  buildEodReportModal,
+  buildEodThreadStartBlocks,
+  decodeEodThreadContext,
+  formatEodReportDetails,
   type ModalMetadata,
   requiresBugSpecificFields,
-  selectedIssueTypeFromValue
+  selectedIssueTypeFromValue,
+  shouldCollectEodInThread
 } from "./modal.js";
+
+type ModalState = ViewSubmitAction["view"]["state"]["values"];
+type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
 
 function getSelectedOptionValue(
   action:
@@ -23,6 +39,34 @@ function getSelectedOptionValue(
   }
 
   return action.selected_option?.value;
+}
+
+function getPlainTextValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string | undefined {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "value" in action) {
+    return action.value ?? undefined;
+  }
+
+  return undefined;
+}
+
+function getDateValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string | undefined {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "selected_date" in action) {
+    return action.selected_date ?? undefined;
+  }
+
+  return undefined;
 }
 
 function parseModalMetadata(view?: { private_metadata?: string }): ModalMetadata | undefined {
@@ -47,9 +91,7 @@ function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): str
   return parseModalMetadata(view)?.channelId;
 }
 
-function getSelectedWorkflowKeyFromState(
-  stateValues?: ViewSubmitAction["view"]["state"]["values"]
-): string {
+function getSelectedWorkflowKeyFromState(stateValues?: ViewSubmitAction["view"]["state"]["values"]): string {
   return (
     getSelectedOptionValue(stateValues?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction]) ??
     listWorkflows()[0].key
@@ -79,21 +121,50 @@ function getSelectedIssueTypeFromState(
   );
 }
 
-function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["values"]) {
-  const parentEpicSelection = stateValues?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction];
-  const blockerTypeValue =
-    stateValues?.[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction] &&
-    "selected_option" in stateValues[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction]
-      ? stateValues[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction].selected_option?.value
-      : undefined;
+function parseBlockerType(value?: string): BlockerType | undefined {
+  return value === "Customer" ||
+    value === "Operations" ||
+    value === "Environmental" ||
+    value === "Other"
+    ? value
+    : undefined;
+}
 
-  const blockerType: BlockerType | undefined =
-    blockerTypeValue === "Customer" ||
-    blockerTypeValue === "Operations" ||
-    blockerTypeValue === "Environmental" ||
-    blockerTypeValue === "Other"
-      ? blockerTypeValue
-      : undefined;
+function parseEodAssetType(value?: string): EodAssetType | undefined {
+  return value === "Building" ||
+    value === "Conveyor" ||
+    value === "Crusher" ||
+    value === "Stockpile" ||
+    value === "Tank" ||
+    value === "Other"
+    ? value
+    : undefined;
+}
+
+function parseEodYesNo(value?: string): EodYesNo | undefined {
+  return value === "Yes" || value === "No" ? value : undefined;
+}
+
+function parseEodCoverageUnit(value?: string): EodCoverageUnit | undefined {
+  return value === "sq ft" || value === "sq m" || value === "acres" || value === "hectares"
+    ? value
+    : undefined;
+}
+
+function parseEodStatus(value?: string): EodStatus | undefined {
+  return value === "Not Started" ||
+    value === "In Progress" ||
+    value === "Complete" ||
+    value === "Blocked"
+    ? value
+    : undefined;
+}
+
+function getModalStateValues(stateValues?: ModalState) {
+  const parentEpicSelection = stateValues?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction];
+  const blockerTypeValue = getSelectedOptionValue(
+    stateValues?.[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction]
+  );
 
   return {
     selectedIssueType: getSelectedIssueTypeFromState(stateValues),
@@ -105,22 +176,10 @@ function getModalStateValues(stateValues?: ViewSubmitAction["view"]["state"]["va
       parentEpicSelection && "selected_option" in parentEpicSelection
         ? parentEpicSelection.selected_option?.text?.text ?? undefined
         : undefined,
-    summary:
-      stateValues?.[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
-      "value" in stateValues[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
-        ? stateValues[CALLBACKS.summaryBlock][CALLBACKS.summaryAction].value ?? undefined
-        : undefined,
-    details:
-      stateValues?.[CALLBACKS.detailsBlock]?.[CALLBACKS.detailsAction] &&
-      "value" in stateValues[CALLBACKS.detailsBlock][CALLBACKS.detailsAction]
-        ? stateValues[CALLBACKS.detailsBlock][CALLBACKS.detailsAction].value ?? undefined
-        : undefined,
-    blockerType,
-    opsDowntimeHours:
-      stateValues?.[CALLBACKS.downtimeBlock]?.[CALLBACKS.downtimeAction] &&
-      "value" in stateValues[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction]
-        ? stateValues[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction].value ?? undefined
-        : undefined
+    summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
+    details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
+    blockerType: parseBlockerType(blockerTypeValue),
+    opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction)
   };
 }
 
@@ -240,6 +299,18 @@ function buildChannelEntryMessage() {
   ];
 }
 
+function getEodChannelId(channelId?: string): string {
+  const resolvedChannelId = channelId ?? env.SLACK_EOD_CHANNEL_ID ?? env.SLACK_TEST_CHANNEL_ID;
+
+  if (!resolvedChannelId) {
+    throw new Error(
+      "A source channel, SLACK_EOD_CHANNEL_ID, or SLACK_TEST_CHANNEL_ID must be configured for EOD intake threads."
+    );
+  }
+
+  return resolvedChannelId;
+}
+
 async function openCreateIssueModal(
   client: App["client"],
   triggerId: string,
@@ -251,7 +322,10 @@ async function openCreateIssueModal(
 
   await client.views.open({
     trigger_id: triggerId,
-    view: buildCreateIssueModal(defaultWorkflow, {}, { channelId })
+    view: buildCreateIssueModal(defaultWorkflow, {}, {
+      workflowKey: defaultWorkflow.key,
+      channelId
+    })
   });
 
   logger.info(logContext);
@@ -261,7 +335,7 @@ async function sendDirectMessage(
   client: App["client"],
   userId: string,
   text: string,
-  blocks?: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>
+  blocks?: DmBlocks
 ) {
   const conversation = await client.conversations.open({
     users: userId
@@ -282,7 +356,7 @@ async function trySendDirectMessage(
   client: App["client"],
   userId: string,
   text: string,
-  blocks: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }> | undefined,
+  blocks: DmBlocks | undefined,
   logger: Pick<Console, "warn">
 ) {
   try {
@@ -290,6 +364,180 @@ async function trySendDirectMessage(
   } catch (error) {
     logger.warn(`Could not send DM confirmation: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+async function createEodThread(
+  client: App["client"],
+  context: Omit<EodThreadContext, "threadTs">
+) {
+  const starterText = `EOD intake started for ${context.parentEpicKey}: ${context.summary}`;
+  const starter = await client.chat.postMessage({
+    channel: context.channelId,
+    text: starterText
+  });
+
+  if (!starter.ts) {
+    throw new Error("Slack did not return a thread timestamp for the EOD intake.");
+  }
+
+  const threadContext: EodThreadContext = {
+    ...context,
+    threadTs: starter.ts
+  };
+
+  await client.chat.update({
+    channel: context.channelId,
+    ts: starter.ts,
+    text: starterText,
+    blocks: buildEodThreadStartBlocks(threadContext)
+  });
+
+  return threadContext;
+}
+
+function validateEodForm(values: ModalState | undefined) {
+  const errors: Record<string, string> = {};
+  const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
+  const assetType = parseEodAssetType(
+    getSelectedOptionValue(values?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
+  );
+  const assetNumber = getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction);
+  const crewOnSite = getPlainTextValue(values, CALLBACKS.eodCrewOnSiteBlock, CALLBACKS.eodCrewOnSiteAction);
+  const jsaSubmitted = parseEodYesNo(
+    getSelectedOptionValue(values?.[CALLBACKS.eodJsaSubmittedBlock]?.[CALLBACKS.eodJsaSubmittedAction])
+  );
+  const permitApproved = getPlainTextValue(
+    values,
+    CALLBACKS.eodPermitApprovedBlock,
+    CALLBACKS.eodPermitApprovedAction
+  );
+  const calibrationCompleted = getPlainTextValue(
+    values,
+    CALLBACKS.eodCalibrationCompletedBlock,
+    CALLBACKS.eodCalibrationCompletedAction
+  );
+  const scansCompletedValue = getPlainTextValue(
+    values,
+    CALLBACKS.eodScansCompletedBlock,
+    CALLBACKS.eodScansCompletedAction
+  );
+  const scanningTimeValue = getPlainTextValue(
+    values,
+    CALLBACKS.eodScanningTimeBlock,
+    CALLBACKS.eodScanningTimeAction
+  );
+  const coverageValue = getPlainTextValue(values, CALLBACKS.eodCoverageBlock, CALLBACKS.eodCoverageAction);
+  const coveredAreaUnits = parseEodCoverageUnit(
+    getSelectedOptionValue(values?.[CALLBACKS.eodCoverageUnitsBlock]?.[CALLBACKS.eodCoverageUnitsAction])
+  );
+  const dataUploadStatus = parseEodStatus(
+    getSelectedOptionValue(values?.[CALLBACKS.eodUploadStatusBlock]?.[CALLBACKS.eodUploadStatusAction])
+  );
+  const dataValidationStatus = parseEodStatus(
+    getSelectedOptionValue(
+      values?.[CALLBACKS.eodValidationStatusBlock]?.[CALLBACKS.eodValidationStatusAction]
+    )
+  );
+  const reportStatus = parseEodStatus(
+    getSelectedOptionValue(values?.[CALLBACKS.eodReportStatusBlock]?.[CALLBACKS.eodReportStatusAction])
+  );
+  const crewOffSite = getPlainTextValue(values, CALLBACKS.eodCrewOffSiteBlock, CALLBACKS.eodCrewOffSiteAction);
+  const notes = getPlainTextValue(values, CALLBACKS.eodNotesBlock, CALLBACKS.eodNotesAction);
+
+  if (!date) {
+    errors[CALLBACKS.eodDateBlock] = "Date is required.";
+  }
+
+  if (!assetType) {
+    errors[CALLBACKS.eodAssetTypeBlock] = "Choose an asset type.";
+  }
+
+  if (!assetNumber) {
+    errors[CALLBACKS.eodAssetNumberBlock] = "Asset number is required.";
+  }
+
+  if (!crewOnSite) {
+    errors[CALLBACKS.eodCrewOnSiteBlock] = "Crew On-Site is required.";
+  }
+
+  if (!jsaSubmitted) {
+    errors[CALLBACKS.eodJsaSubmittedBlock] = "Choose whether JSA was submitted.";
+  }
+
+  if (!permitApproved) {
+    errors[CALLBACKS.eodPermitApprovedBlock] = "Permit Approved is required.";
+  }
+
+  if (!calibrationCompleted) {
+    errors[CALLBACKS.eodCalibrationCompletedBlock] = "Calibration Completed is required.";
+  }
+
+  if (!scansCompletedValue) {
+    errors[CALLBACKS.eodScansCompletedBlock] = "Number of Scans Completed is required.";
+  } else if (Number.isNaN(Number(scansCompletedValue))) {
+    errors[CALLBACKS.eodScansCompletedBlock] = "Enter a valid number.";
+  }
+
+  if (!scanningTimeValue) {
+    errors[CALLBACKS.eodScanningTimeBlock] = "Total Scanning Time is required.";
+  } else if (Number.isNaN(Number(scanningTimeValue))) {
+    errors[CALLBACKS.eodScanningTimeBlock] = "Enter a valid number.";
+  }
+
+  if (!coverageValue) {
+    errors[CALLBACKS.eodCoverageBlock] = "Scanning Area Coverage is required.";
+  } else if (Number.isNaN(Number(coverageValue))) {
+    errors[CALLBACKS.eodCoverageBlock] = "Enter a valid number.";
+  }
+
+  if (!coveredAreaUnits) {
+    errors[CALLBACKS.eodCoverageUnitsBlock] = "Choose area units.";
+  }
+
+  if (!dataUploadStatus) {
+    errors[CALLBACKS.eodUploadStatusBlock] = "Choose data upload status.";
+  }
+
+  if (!dataValidationStatus) {
+    errors[CALLBACKS.eodValidationStatusBlock] = "Choose data validation status.";
+  }
+
+  if (!reportStatus) {
+    errors[CALLBACKS.eodReportStatusBlock] = "Choose report status.";
+  }
+
+  if (!crewOffSite) {
+    errors[CALLBACKS.eodCrewOffSiteBlock] = "Crew Off-Site is required.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return {
+      success: false as const,
+      errors
+    };
+  }
+
+  return {
+    success: true as const,
+    values: {
+      date: date as string,
+      assetType: assetType as EodAssetType,
+      assetNumber: assetNumber as string,
+      crewOnSite: crewOnSite as string,
+      jsaSubmitted: jsaSubmitted as EodYesNo,
+      permitApproved: permitApproved as string,
+      calibrationCompleted: calibrationCompleted as string,
+      numberOfScansCompleted: Number(scansCompletedValue),
+      totalScanningTimeHours: Number(scanningTimeValue),
+      scanningAreaCoverage: Number(coverageValue),
+      coveredAreaUnits: coveredAreaUnits as EodCoverageUnit,
+      dataUploadStatus: dataUploadStatus as EodStatus,
+      dataValidationStatus: dataValidationStatus as EodStatus,
+      reportStatus: reportStatus as EodStatus,
+      crewOffSite: crewOffSite as string,
+      notes: notes?.trim() || undefined
+    } satisfies EodReportFormValues
+  };
 }
 
 export function registerSlackHandlers(app: App): void {
@@ -394,7 +642,6 @@ export function registerSlackHandlers(app: App): void {
     }
 
     const workflow = getWorkflowByKey(selectedWorkflowKey);
-
     const state = getModalStateValues(body.view.state.values);
     const nextSelectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
       ? state.selectedIssueType
@@ -408,13 +655,17 @@ export function registerSlackHandlers(app: App): void {
       await client.views.update({
         view_id: body.view.id,
         hash: body.view.hash,
-        view: buildCreateIssueModal(workflow, {
-          ...state,
-          selectedIssueType: nextSelectedIssueType
-        }, {
-          workflowKey: workflow.key,
-          channelId: getChannelIdFromViewMetadata(body.view)
-        })
+        view: buildCreateIssueModal(
+          workflow,
+          {
+            ...state,
+            selectedIssueType: nextSelectedIssueType
+          },
+          {
+            workflowKey: workflow.key,
+            channelId: getChannelIdFromViewMetadata(body.view)
+          }
+        )
       });
     } catch (error) {
       logger.error(`Failed modal workflow update for workflow ${workflow.key}.`, error);
@@ -446,13 +697,17 @@ export function registerSlackHandlers(app: App): void {
       await client.views.update({
         view_id: body.view.id,
         hash: body.view.hash,
-        view: buildCreateIssueModal(workflow, {
-          ...state,
-          selectedIssueType
-        }, {
-          workflowKey: workflow.key,
-          channelId: getChannelIdFromViewMetadata(body.view)
-        })
+        view: buildCreateIssueModal(
+          workflow,
+          {
+            ...state,
+            selectedIssueType
+          },
+          {
+            workflowKey: workflow.key,
+            channelId: getChannelIdFromViewMetadata(body.view)
+          }
+        )
       });
     } catch (error) {
       logger.error(
@@ -463,6 +718,37 @@ export function registerSlackHandlers(app: App): void {
     }
 
     logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
+  });
+
+  app.action(CALLBACKS.eodStartButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("trigger_id" in body)) {
+      logger.error("EOD start action did not include a trigger_id.");
+      return;
+    }
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("EOD start action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("EOD start action did not include thread context.");
+      return;
+    }
+
+    const context = decodeEodThreadContext(contextValue);
+
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildEodReportModal(context)
+    });
+
+    logger.info(`Opened EOD intake modal for thread ${context.threadTs}`);
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
@@ -488,9 +774,7 @@ export function registerSlackHandlers(app: App): void {
         }))
       });
 
-      logger.info(
-        `Returned ${epics.length} Epic options for workflow ${workflow.key} using JQL: ${jql}`
-      );
+      logger.info(`Returned ${epics.length} Epic options for workflow ${workflow.key} using JQL: ${jql}`);
     } catch (error) {
       logger.error(`Failed to load Epic options for query "${body.value ?? ""}".`, error);
       await ack({ options: [] });
@@ -501,8 +785,8 @@ export function registerSlackHandlers(app: App): void {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
     const channelId = getChannelIdFromViewMetadata(view);
-    const workflow = getWorkflowByKey(workflowKey);
     const values = view.state.values;
+    const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
       values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
       "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
@@ -529,30 +813,33 @@ export function registerSlackHandlers(app: App): void {
         ? values[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction].selected_option?.value
         : undefined;
     const downtimeValue =
-      values[CALLBACKS.downtimeBlock]?.[CALLBACKS.downtimeAction] &&
-      "value" in values[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction]
-        ? values[CALLBACKS.downtimeBlock][CALLBACKS.downtimeAction].value
-        : "";
-    const details =
-      values[CALLBACKS.detailsBlock]?.[CALLBACKS.detailsAction] &&
-      "value" in values[CALLBACKS.detailsBlock][CALLBACKS.detailsAction]
-        ? values[CALLBACKS.detailsBlock][CALLBACKS.detailsAction].value
-        : "";
+      getPlainTextValue(values, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction) ?? "";
+    const details = getPlainTextValue(values, CALLBACKS.detailsBlock, CALLBACKS.detailsAction) ?? "";
 
-    if (!parentEpicKey || !issueTypeValue || !summary || !details) {
+    if (!parentEpicKey || !issueTypeValue || !summary) {
       await ack({
         response_action: "errors",
         errors: {
           ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
-          ...(summary ? {} : { [CALLBACKS.summaryBlock]: "Summary is required." }),
-          ...(details ? {} : { [CALLBACKS.detailsBlock]: "Details are required." })
+          ...(summary ? {} : { [CALLBACKS.summaryBlock]: "Summary is required." })
         }
       });
       return;
     }
 
     const selectedIssueType = selectedIssueTypeFromValue(issueTypeValue);
+
+    if (!shouldCollectEodInThread(selectedIssueType) && !details) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.detailsBlock]: "Details are required."
+        }
+      });
+      return;
+    }
+
     if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
       const blockerTypeLabel =
@@ -580,6 +867,27 @@ export function registerSlackHandlers(app: App): void {
     await ack();
 
     try {
+      if (shouldCollectEodInThread(selectedIssueType)) {
+        const threadContext = await createEodThread(client, {
+          workflowKey: workflow.key,
+          parentEpicKey,
+          summary,
+          requesterId: body.user.id,
+          channelId: getEodChannelId(channelId)
+        });
+
+        await trySendDirectMessage(
+          client,
+          body.user.id,
+          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Complete EOD Intake" to finish the Jira issue.`,
+          undefined,
+          logger
+        );
+
+        logger.info(`Started EOD intake thread ${threadContext.threadTs} for ${parentEpicKey}`);
+        return;
+      }
+
       const issue = await createIssue({
         workflow,
         issueType: selectedIssueType,
@@ -587,13 +895,7 @@ export function registerSlackHandlers(app: App): void {
         summary,
         details,
         requesterName: body.user.id,
-        blockerType:
-          blockerTypeValue === "Customer" ||
-          blockerTypeValue === "Operations" ||
-          blockerTypeValue === "Environmental" ||
-          blockerTypeValue === "Other"
-            ? blockerTypeValue
-            : undefined,
+        blockerType: parseBlockerType(blockerTypeValue),
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
       });
 
@@ -632,6 +934,80 @@ export function registerSlackHandlers(app: App): void {
           error instanceof Error ? error.message : String(error)
         }`
       );
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        `Could not continue the workflow: ${formatJiraErrorMessage(error)}`,
+        undefined,
+        logger
+      );
+    }
+  });
+
+  app.view(CALLBACKS.eodReportView, async ({ ack, body, client, logger, view }) => {
+    let context: EodThreadContext;
+
+    try {
+      context = decodeEodThreadContext(view.private_metadata);
+    } catch (error) {
+      logger.error(error);
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.eodDateBlock]: "Could not load the thread context. Please start the EOD intake again."
+        }
+      });
+      return;
+    }
+
+    const validation = validateEodForm(view.state.values);
+
+    if (!validation.success) {
+      await ack({
+        response_action: "errors",
+        errors: validation.errors
+      });
+      return;
+    }
+
+    await ack();
+
+    try {
+      const workflow = getWorkflowByKey(context.workflowKey);
+      const details = formatEodReportDetails(validation.values);
+      const issue = await createIssue({
+        workflow,
+        issueType: "EOD Report",
+        parentEpicKey: context.parentEpicKey,
+        summary: context.summary,
+        details,
+        requesterName: body.user.id
+      });
+
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Created Jira issue ${issue.key} for ${context.parentEpicKey}.`
+      });
+
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
+        undefined,
+        logger
+      );
+
+      logger.info(`Created EOD Jira issue ${issue.key} for thread ${context.threadTs}`);
+    } catch (error) {
+      logger.error(error);
+
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Could not create the Jira issue: ${formatJiraErrorMessage(error)}`
+      });
+
       await trySendDirectMessage(
         client,
         body.user.id,

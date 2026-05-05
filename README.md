@@ -12,6 +12,7 @@ Production deployment is triggered from a semver release tag after the repositor
 - Searches Jira Epics live for the selected workflow
 - Creates `Bug` or `EOD Report` issues in Jira
 - Attaches the selected Epic as the parent
+- Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
 - Optionally posts a confirmation message to a Slack test channel
 - Supports workflow-specific required fields, such as the `Reporting/Job Board` Bug requirements
 
@@ -34,6 +35,15 @@ The repo currently includes:
 - Additional Bug fields:
   - `RUG Blocker Type`
   - `RUG Ops Downtime (hours)`
+
+The EOD intake modal currently seeds `Asset Type` with:
+
+- `Building`
+- `Conveyor`
+- `Crusher`
+- `Stockpile`
+- `Tank`
+- `Other`
 
 ## Repository Layout
 
@@ -145,6 +155,8 @@ For a local smoke test:
    - `Reporting/Job Board` only shows RB Epics
    - RB Bug flows show the extra required fields
    - EOD flows do not show RB-only Bug fields
+   - EOD flows create a thread in `SLACK_EOD_CHANNEL_ID` or fall back to `SLACK_TEST_CHANNEL_ID`
+   - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
 
 ## Deployment Notes
 
