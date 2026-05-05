@@ -141,11 +141,18 @@ function staticSelectBlock(
 }
 
 export interface ModalStateValues {
+  parentEpicKey?: string;
+  parentEpicLabel?: string;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
   blockerType?: BlockerType;
   opsDowntimeHours?: string;
+}
+
+export interface ModalMetadata {
+  workflowKey: string;
+  channelId?: string;
 }
 
 function shouldShowReportingBugFields(
@@ -161,7 +168,8 @@ export function shouldCollectEodInThread(issueType: SelectableIssueType): boolea
 
 export function buildCreateIssueModal(
   defaultWorkflow: WorkflowDefinition,
-  state: ModalStateValues = {}
+  state: ModalStateValues = {},
+  metadata?: ModalMetadata
 ) {
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
   const blocks: KnownBlock[] = [
@@ -271,7 +279,10 @@ export function buildCreateIssueModal(
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.createIssueView,
-    private_metadata: defaultWorkflow.key,
+    private_metadata: JSON.stringify({
+      workflowKey: defaultWorkflow.key,
+      ...(metadata?.channelId ? { channelId: metadata.channelId } : {})
+    }),
     title: {
       type: "plain_text" as const,
       text: "Create Gecko Report"
@@ -522,4 +533,11 @@ export function requiresReportingBugFields(
   issueType: Exclude<SupportedIssueType, "Epic">
 ): boolean {
   return shouldShowReportingBugFields(workflow, issueType);
+}
+
+export function requiresBugSpecificFields(
+  workflow: WorkflowDefinition,
+  issueType: Exclude<SupportedIssueType, "Epic">
+): boolean {
+  return requiresReportingBugFields(workflow, issueType);
 }
