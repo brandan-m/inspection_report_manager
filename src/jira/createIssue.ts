@@ -79,18 +79,27 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
     }
   };
 
-  if (input.workflow.jiraProjectKey === "RB" && input.issueType === "Bug") {
+  if (
+    (input.workflow.jiraProjectKey === "RB" || input.workflow.jiraProjectKey === "APIDD") &&
+    input.issueType === "Bug"
+  ) {
+    const isApiWorkflow = input.workflow.jiraProjectKey === "APIDD";
+    const blockerTypeLabel = isApiWorkflow ? "API Blocker Type" : "RUG Blocker Type";
+    const downtimeLabel = isApiWorkflow ? "API Ops Downtime (hours)" : "RUG Ops Downtime (hours)";
+    const blockerTypeFieldId = isApiWorkflow ? "customfield_17561" : "customfield_16963";
+    const downtimeFieldId = isApiWorkflow ? "customfield_17562" : "customfield_16964";
+
     if (!input.blockerType) {
-      throw new Error("RUG Blocker Type is required for Reporting/Job Board Bugs.");
+      throw new Error(`${blockerTypeLabel} is required for ${input.workflow.label} Bugs.`);
     }
 
     if (typeof input.opsDowntimeHours !== "number" || Number.isNaN(input.opsDowntimeHours)) {
-      throw new Error("RUG Ops Downtime (hours) is required for Reporting/Job Board Bugs.");
+      throw new Error(`${downtimeLabel} is required for ${input.workflow.label} Bugs.`);
     }
 
     const createFields = await getCreateFields(input.workflow.jiraProjectKey, input.issueType);
 
-    const blockerTypeOption = createFields.customfield_16963?.allowedValues?.find(
+    const blockerTypeOption = createFields[blockerTypeFieldId]?.allowedValues?.find(
       (option) => option.value === input.blockerType
     );
 
@@ -98,8 +107,8 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
       throw new Error(`Could not map blocker type "${input.blockerType}" to a Jira option.`);
     }
 
-    fields.customfield_16963 = { id: blockerTypeOption.id };
-    fields.customfield_16964 = input.opsDowntimeHours;
+    fields[blockerTypeFieldId] = { id: blockerTypeOption.id };
+    fields[downtimeFieldId] = input.opsDowntimeHours;
   }
 
   const payload = {

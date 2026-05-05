@@ -91,7 +91,7 @@ function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): str
   return parseModalMetadata(view)?.channelId;
 }
 
-function getSelectedWorkflowKeyFromState(stateValues?: ModalState): string {
+function getSelectedWorkflowKeyFromState(stateValues?: ViewSubmitAction["view"]["state"]["values"]): string {
   return (
     getSelectedOptionValue(stateValues?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction]) ??
     listWorkflows()[0].key
@@ -322,7 +322,10 @@ async function openCreateIssueModal(
 
   await client.views.open({
     trigger_id: triggerId,
-    view: buildCreateIssueModal(defaultWorkflow, {}, { workflowKey: defaultWorkflow.key, channelId })
+    view: buildCreateIssueModal(defaultWorkflow, {}, {
+      workflowKey: defaultWorkflow.key,
+      channelId
+    })
   });
 
   logger.info(logContext);
@@ -359,9 +362,7 @@ async function trySendDirectMessage(
   try {
     await sendDirectMessage(client, userId, text, blocks);
   } catch (error) {
-    logger.warn(
-      `Could not send DM confirmation: ${error instanceof Error ? error.message : String(error)}`
-    );
+    logger.warn(`Could not send DM confirmation: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -598,9 +599,7 @@ export function registerSlackHandlers(app: App): void {
 
       logger.info(`Posted channel entry message in ${body.channel_id}`);
     } catch (error) {
-      logger.error(
-        `Could not post channel entry message: ${error instanceof Error ? error.message : String(error)}`
-      );
+      logger.error(`Could not post channel entry message: ${error instanceof Error ? error.message : String(error)}`);
 
       await respond({
         response_type: "ephemeral",
@@ -648,6 +647,10 @@ export function registerSlackHandlers(app: App): void {
       ? state.selectedIssueType
       : workflow.allowedIssueTypes[0];
 
+    logger.info(
+      `Attempting modal workflow update to ${workflow.key} with issueType=${nextSelectedIssueType ?? "n/a"} view=${body.view.id}`
+    );
+
     try {
       await client.views.update({
         view_id: body.view.id,
@@ -685,6 +688,10 @@ export function registerSlackHandlers(app: App): void {
     const selectedIssueTypeValue = getSelectedOptionValue(body.actions[0]);
     const state = getModalStateValues(body.view.state.values);
     const selectedIssueType = selectedIssueTypeFromValue(selectedIssueTypeValue ?? "Bug");
+
+    logger.info(
+      `Attempting modal issue type update for workflow ${workflow.key} to ${selectedIssueType} view=${body.view.id}`
+    );
 
     try {
       await client.views.update({
@@ -749,6 +756,11 @@ export function registerSlackHandlers(app: App): void {
       const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
       const workflow = getWorkflowByKey(workflowKey);
       const query = (body.value ?? "").trim();
+
+      logger.info(
+        `Received Epic lookup request for workflow ${workflow.key} with query="${query}" action=${body.action_id ?? "n/a"}`
+      );
+
       const jql = buildEpicSearchJql(workflow, query);
       const epics = await searchEpics(workflow, query);
 
@@ -773,25 +785,36 @@ export function registerSlackHandlers(app: App): void {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
     const channelId = getChannelIdFromViewMetadata(view);
+    const values = view.state.values;
     const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
-      view.state.values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
-      "selected_option" in view.state.values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
-        ? view.state.values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.text?.text
+      values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
+      "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
+        ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.text?.text
         : undefined;
-    const parentEpicKey = getSelectedOptionValue(
-      view.state.values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction]
-    );
-    const issueTypeValue = getSelectedOptionValue(
-      view.state.values[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction]
-    );
-    const summary = getPlainTextValue(view.state.values, CALLBACKS.summaryBlock, CALLBACKS.summaryAction) ?? "";
-    const blockerTypeValue = getSelectedOptionValue(
-      view.state.values[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction]
-    );
+    const parentEpicKey =
+      values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
+      "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
+        ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.value
+        : undefined;
+    const issueTypeValue =
+      values[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction] &&
+      "selected_option" in values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction]
+        ? values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction].selected_option?.value
+        : undefined;
+    const summary =
+      values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
+      "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
+        ? values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction].value
+        : "";
+    const blockerTypeValue =
+      values[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction] &&
+      "selected_option" in values[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction]
+        ? values[CALLBACKS.blockerTypeBlock][CALLBACKS.blockerTypeAction].selected_option?.value
+        : undefined;
     const downtimeValue =
-      getPlainTextValue(view.state.values, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction) ?? "";
-    const details = getPlainTextValue(view.state.values, CALLBACKS.detailsBlock, CALLBACKS.detailsAction) ?? "";
+      getPlainTextValue(values, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction) ?? "";
+    const details = getPlainTextValue(values, CALLBACKS.detailsBlock, CALLBACKS.detailsAction) ?? "";
 
     if (!parentEpicKey || !issueTypeValue || !summary) {
       await ack({
@@ -819,9 +842,11 @@ export function registerSlackHandlers(app: App): void {
 
     if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
+      const blockerTypeLabel =
+        workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
 
       if (!blockerTypeValue) {
-        errors[CALLBACKS.blockerTypeBlock] = "Choose a RUG Blocker Type.";
+        errors[CALLBACKS.blockerTypeBlock] = `Choose an ${blockerTypeLabel}.`;
       }
 
       if (!downtimeValue) {

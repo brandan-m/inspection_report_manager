@@ -18,12 +18,12 @@ module "inspection_report_manager_service" {
 
 module "inspection_report_manager_secrets" {
   for_each = toset([
-    "jira-api-token",
+    "inspection-report-manager-jira-api-token",
     "jira-base-url",
-    "jira-email",
-    "slack-app-token",
-    "slack-bot-token",
-    "slack-signing-secret",
+    "inspection-report-manager-jira-email",
+    "inspection-report-manager-slack-app-token",
+    "inspection-report-manager-slack-bot-token",
+    "inspection-report-manager-slack-signing-secret",
     "slack-test-channel-id"
   ])
   source = "../../modules/secret"

@@ -110,36 +110,6 @@ function plainTextInputBlock(
   };
 }
 
-function staticSelectBlock(
-  blockId: string,
-  actionId: string,
-  label: string,
-  placeholder: string,
-  options: PlainTextOption[],
-  initialValue?: string,
-  optional = false
-): KnownBlock {
-  return {
-    type: "input",
-    block_id: blockId,
-    optional,
-    element: {
-      type: "static_select",
-      action_id: actionId,
-      initial_option: selectedOption(initialValue),
-      placeholder: {
-        type: "plain_text",
-        text: placeholder
-      },
-      options
-    },
-    label: {
-      type: "plain_text",
-      text: label
-    }
-  };
-}
-
 export interface ModalStateValues {
   parentEpicKey?: string;
   parentEpicLabel?: string;
@@ -155,11 +125,22 @@ export interface ModalMetadata {
   channelId?: string;
 }
 
-function shouldShowReportingBugFields(
-  workflow: WorkflowDefinition,
-  issueType: SelectableIssueType
-): boolean {
-  return workflow.jiraProjectKey === "RB" && issueType === "Bug";
+function requiresBugFields(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
+  return (workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "APIDD") && issueType === "Bug";
+}
+
+function blockerTypeLabel(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
+}
+
+function downtimeLabel(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD" ? "API Ops Downtime (hours)" : "RUG Ops Downtime (hours)";
+}
+
+function bugFieldPlaceholder(workflow: WorkflowDefinition): string {
+  return workflow.jiraProjectKey === "APIDD"
+    ? "Required for API Data Delivery Bugs"
+    : "Required for Reporting/Job Board Bugs";
 }
 
 export function shouldCollectEodInThread(issueType: SelectableIssueType): boolean {
@@ -169,15 +150,18 @@ export function shouldCollectEodInThread(issueType: SelectableIssueType): boolea
 export function buildCreateIssueModal(
   defaultWorkflow: WorkflowDefinition,
   state: ModalStateValues = {},
-  metadata?: ModalMetadata
+  metadata: Partial<ModalMetadata> = {}
 ) {
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
   const blocks: KnownBlock[] = [
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.workflowBlock,
-      dispatch_action: true,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Workflow*"
+      },
+      accessory: {
         type: "static_select",
         action_id: CALLBACKS.workflowAction,
         initial_option: {
@@ -188,34 +172,43 @@ export function buildCreateIssueModal(
           value: defaultWorkflow.key
         },
         options: workflowOptions()
-      },
-      label: {
-        type: "plain_text",
-        text: "Workflow"
       }
     },
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.epicBlock,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Parent Epic*"
+      },
+      accessory: {
         type: "external_select",
         action_id: CALLBACKS.epicAction,
         min_query_length: 0,
+        initial_option:
+          state.parentEpicKey && state.parentEpicLabel
+            ? {
+                text: {
+                  type: "plain_text",
+                  text: state.parentEpicLabel.slice(0, 75)
+                },
+                value: state.parentEpicKey
+              }
+            : undefined,
         placeholder: {
           type: "plain_text",
           text: "Search Jira Epics"
         }
-      },
-      label: {
-        type: "plain_text",
-        text: "Parent Epic"
       }
     },
     {
-      type: "input",
+      type: "section",
       block_id: CALLBACKS.issueTypeBlock,
-      dispatch_action: true,
-      element: {
+      text: {
+        type: "mrkdwn",
+        text: "*Issue Type*"
+      },
+      accessory: {
         type: "static_select",
         action_id: CALLBACKS.issueTypeAction,
         initial_option: {
@@ -226,10 +219,6 @@ export function buildCreateIssueModal(
           value: selectedIssueType
         },
         options: issueTypeOptions(defaultWorkflow)
-      },
-      label: {
-        type: "plain_text",
-        text: "Issue Type"
       }
     },
     plainTextInputBlock(
@@ -240,6 +229,54 @@ export function buildCreateIssueModal(
       state.summary
     )
   ];
+
+  if (requiresBugFields(defaultWorkflow, selectedIssueType)) {
+    blocks.splice(3, 0, {
+      type: "input",
+      block_id: CALLBACKS.blockerTypeBlock,
+      element: {
+        type: "static_select",
+        action_id: CALLBACKS.blockerTypeAction,
+        initial_option: state.blockerType
+          ? {
+              text: {
+                type: "plain_text",
+                text: state.blockerType
+              },
+              value: state.blockerType
+            }
+          : undefined,
+        placeholder: {
+          type: "plain_text",
+          text: bugFieldPlaceholder(defaultWorkflow)
+        },
+        options: blockerTypeOptions()
+      },
+      label: {
+        type: "plain_text",
+        text: blockerTypeLabel(defaultWorkflow)
+      }
+    });
+
+    blocks.splice(4, 0, {
+      type: "input",
+      block_id: CALLBACKS.downtimeBlock,
+      element: {
+        type: "number_input",
+        action_id: CALLBACKS.downtimeAction,
+        is_decimal_allowed: true,
+        initial_value: state.opsDowntimeHours,
+        placeholder: {
+          type: "plain_text",
+          text: bugFieldPlaceholder(defaultWorkflow)
+        }
+      },
+      label: {
+        type: "plain_text",
+        text: downtimeLabel(defaultWorkflow)
+      }
+    });
+  }
 
   if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
@@ -254,34 +291,12 @@ export function buildCreateIssueModal(
     );
   }
 
-  if (shouldShowReportingBugFields(defaultWorkflow, selectedIssueType)) {
-    blocks.splice(
-      4,
-      0,
-      staticSelectBlock(
-        CALLBACKS.blockerTypeBlock,
-        CALLBACKS.blockerTypeAction,
-        "RUG Blocker Type",
-        "Required for Reporting/Job Board Bugs",
-        blockerTypeOptions(),
-        state.blockerType
-      ),
-      plainTextInputBlock(
-        CALLBACKS.downtimeBlock,
-        CALLBACKS.downtimeAction,
-        "RUG Ops Downtime (hours)",
-        "Required for Reporting/Job Board Bugs",
-        state.opsDowntimeHours
-      )
-    );
-  }
-
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.createIssueView,
     private_metadata: JSON.stringify({
-      workflowKey: defaultWorkflow.key,
-      ...(metadata?.channelId ? { channelId: metadata.channelId } : {})
+      workflowKey: metadata.workflowKey ?? defaultWorkflow.key,
+      channelId: metadata.channelId
     }),
     title: {
       type: "plain_text" as const,
@@ -391,13 +406,23 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "Date"
         }
       },
-      staticSelectBlock(
-        CALLBACKS.eodAssetTypeBlock,
-        CALLBACKS.eodAssetTypeAction,
-        "Asset Type",
-        "Choose asset type",
-        simpleOptions(EOD_ASSET_TYPES)
-      ),
+      {
+        type: "input",
+        block_id: CALLBACKS.eodAssetTypeBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodAssetTypeAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose asset type"
+          },
+          options: simpleOptions(EOD_ASSET_TYPES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Asset Type"
+        }
+      },
       plainTextInputBlock(
         CALLBACKS.eodAssetNumberBlock,
         CALLBACKS.eodAssetNumberAction,
@@ -410,13 +435,23 @@ export function buildEodReportModal(context: EodThreadContext) {
         "Crew On-Site",
         "Crew arrival time or detail"
       ),
-      staticSelectBlock(
-        CALLBACKS.eodJsaSubmittedBlock,
-        CALLBACKS.eodJsaSubmittedAction,
-        "JSA Submitted",
-        "Choose status",
-        simpleOptions(EOD_YES_NO)
-      ),
+      {
+        type: "input",
+        block_id: CALLBACKS.eodJsaSubmittedBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodJsaSubmittedAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose status"
+          },
+          options: simpleOptions(EOD_YES_NO)
+        },
+        label: {
+          type: "plain_text",
+          text: "JSA Submitted"
+        }
+      },
       plainTextInputBlock(
         CALLBACKS.eodPermitApprovedBlock,
         CALLBACKS.eodPermitApprovedAction,
@@ -447,34 +482,74 @@ export function buildEodReportModal(context: EodThreadContext) {
         "Scanning Area Coverage",
         "0"
       ),
-      staticSelectBlock(
-        CALLBACKS.eodCoverageUnitsBlock,
-        CALLBACKS.eodCoverageUnitsAction,
-        "Covered Area Units",
-        "Choose units",
-        simpleOptions(EOD_COVERAGE_UNITS)
-      ),
-      staticSelectBlock(
-        CALLBACKS.eodUploadStatusBlock,
-        CALLBACKS.eodUploadStatusAction,
-        "Data Upload Status",
-        "Choose status",
-        simpleOptions(EOD_STATUSES)
-      ),
-      staticSelectBlock(
-        CALLBACKS.eodValidationStatusBlock,
-        CALLBACKS.eodValidationStatusAction,
-        "Data Validation Status",
-        "Choose status",
-        simpleOptions(EOD_STATUSES)
-      ),
-      staticSelectBlock(
-        CALLBACKS.eodReportStatusBlock,
-        CALLBACKS.eodReportStatusAction,
-        "Report Status",
-        "Choose status",
-        simpleOptions(EOD_STATUSES)
-      ),
+      {
+        type: "input",
+        block_id: CALLBACKS.eodCoverageUnitsBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodCoverageUnitsAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose units"
+          },
+          options: simpleOptions(EOD_COVERAGE_UNITS)
+        },
+        label: {
+          type: "plain_text",
+          text: "Covered Area Units"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodUploadStatusBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodUploadStatusAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose status"
+          },
+          options: simpleOptions(EOD_STATUSES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Data Upload Status"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodValidationStatusBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodValidationStatusAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose status"
+          },
+          options: simpleOptions(EOD_STATUSES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Data Validation Status"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodReportStatusBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodReportStatusAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose status"
+          },
+          options: simpleOptions(EOD_STATUSES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Report Status"
+        }
+      },
       plainTextInputBlock(
         CALLBACKS.eodCrewOffSiteBlock,
         CALLBACKS.eodCrewOffSiteAction,
@@ -532,12 +607,12 @@ export function requiresReportingBugFields(
   workflow: WorkflowDefinition,
   issueType: Exclude<SupportedIssueType, "Epic">
 ): boolean {
-  return shouldShowReportingBugFields(workflow, issueType);
+  return requiresBugFields(workflow, issueType);
 }
 
 export function requiresBugSpecificFields(
   workflow: WorkflowDefinition,
   issueType: Exclude<SupportedIssueType, "Epic">
 ): boolean {
-  return requiresReportingBugFields(workflow, issueType);
+  return requiresBugFields(workflow, issueType);
 }

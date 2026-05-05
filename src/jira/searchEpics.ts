@@ -28,10 +28,19 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     maxResults: 20
   };
 
-  const result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search/jql", {
-    method: "POST",
-    body: JSON.stringify(payload)
-  });
+  let result: JiraSearchResponse;
+
+  try {
+    result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search/jql", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  } catch {
+    result = await jiraRequest<JiraSearchResponse>("/rest/api/3/search", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  }
 
   return result.issues.map((issue) => ({
     key: issue.key,
