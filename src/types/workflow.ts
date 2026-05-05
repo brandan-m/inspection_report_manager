@@ -9,7 +9,7 @@ export type EodAssetType =
   | "Tank"
   | "Other";
 export type EodYesNo = "Yes" | "No";
-export type EodCoverageUnit = "sq ft" | "sq m" | "acres" | "hectares";
+export type EodCoverageUnit = "ft^2" | "m^2";
 export type EodStatus = "Not Started" | "In Progress" | "Complete" | "Blocked";
 
 export interface WorkflowDefinition {
@@ -58,7 +58,6 @@ export interface EodReportFormValues {
 export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
-  summary: string;
   requesterId: string;
   channelId: string;
   threadTs: string;

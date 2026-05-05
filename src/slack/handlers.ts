@@ -14,6 +14,7 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
   buildEodThreadStartBlocks,
@@ -146,9 +147,7 @@ function parseEodYesNo(value?: string): EodYesNo | undefined {
 }
 
 function parseEodCoverageUnit(value?: string): EodCoverageUnit | undefined {
-  return value === "sq ft" || value === "sq m" || value === "acres" || value === "hectares"
-    ? value
-    : undefined;
+  return value === "ft^2" || value === "m^2" ? value : undefined;
 }
 
 function parseEodStatus(value?: string): EodStatus | undefined {
@@ -370,7 +369,7 @@ async function createEodThread(
   client: App["client"],
   context: Omit<EodThreadContext, "threadTs">
 ) {
-  const starterText = `EOD intake started for ${context.parentEpicKey}: ${context.summary}`;
+  const starterText = `EOD intake started for ${context.parentEpicKey}`;
   const starter = await client.chat.postMessage({
     channel: context.channelId,
     text: starterText
@@ -816,21 +815,34 @@ export function registerSlackHandlers(app: App): void {
       getPlainTextValue(values, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction) ?? "";
     const details = getPlainTextValue(values, CALLBACKS.detailsBlock, CALLBACKS.detailsAction) ?? "";
 
-    if (!parentEpicKey || !issueTypeValue || !summary) {
+    const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
+    const isEod = selectedIssueType === "EOD Report";
+
+    if (!parentEpicKey || !issueTypeValue || (!isEod && !summary)) {
       await ack({
         response_action: "errors",
         errors: {
           ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
-          ...(summary ? {} : { [CALLBACKS.summaryBlock]: "Summary is required." })
+          ...(isEod || summary
+            ? {}
+            : { [CALLBACKS.summaryBlock]: "Summary is required." })
         }
       });
       return;
     }
 
-    const selectedIssueType = selectedIssueTypeFromValue(issueTypeValue);
+    if (!selectedIssueType) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.issueTypeBlock]: "Please choose an issue type."
+        }
+      });
+      return;
+    }
 
-    if (!shouldCollectEodInThread(selectedIssueType) && !details) {
+    if (!isEod && !details) {
       await ack({
         response_action: "errors",
         errors: {
@@ -867,11 +879,10 @@ export function registerSlackHandlers(app: App): void {
     await ack();
 
     try {
-      if (shouldCollectEodInThread(selectedIssueType)) {
+      if (isEod) {
         const threadContext = await createEodThread(client, {
           workflowKey: workflow.key,
           parentEpicKey,
-          summary,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
@@ -892,8 +903,8 @@ export function registerSlackHandlers(app: App): void {
         workflow,
         issueType: selectedIssueType,
         parentEpicKey,
-        summary,
-        details,
+        summary: summary ?? "",
+        details: details ?? "",
         requesterName: body.user.id,
         blockerType: parseBlockerType(blockerTypeValue),
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
@@ -905,7 +916,7 @@ export function registerSlackHandlers(app: App): void {
         issueType: selectedIssueType,
         requesterId: body.user.id,
         issueKey: issue.key,
-        issueSummary: summary,
+        issueSummary: summary ?? "",
         parentEpicKey,
         parentEpicSummary: getEpicSummaryFromLabel(parentEpicLabel, parentEpicKey)
       });
@@ -974,12 +985,13 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
+      const summary = buildEodReportSummary(validation.values);
       const details = formatEodReportDetails(validation.values);
       const issue = await createIssue({
         workflow,
         issueType: "EOD Report",
         parentEpicKey: context.parentEpicKey,
-        summary: context.summary,
+        summary,
         details,
         requesterName: body.user.id
       });
