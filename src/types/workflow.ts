@@ -1,4 +1,4 @@
-export type SupportedIssueType = "Bug" | "EOD Report" | "Epic";
+export type SupportedIssueType = "Bug" | "EOD Report" | "Task" | "Epic";
 export type SelectableIssueType = Exclude<SupportedIssueType, "Epic">;
 export type BlockerType = "Customer" | "Operations" | "Environmental" | "Other";
 export type EodAssetType =
@@ -18,6 +18,7 @@ export interface WorkflowDefinition {
   jiraProjectKey: string;
   allowedIssueTypes: SelectableIssueType[];
   epicSearchJql: string;
+  intakeForm?: "generic" | "ehs";
 }
 
 export interface CreateIssueInput {
@@ -62,4 +63,47 @@ export interface EodThreadContext {
   requesterId: string;
   channelId: string;
   threadTs: string;
+}
+
+export interface EhsFormValues {
+  drugTesting?: string;
+  backgroundChecks?: string;
+  forms?: string;
+  idRequirements: string[];
+  idOther?: string;
+  trainingSiteSpecific?: string;
+  trainingOther1?: string;
+  trainingOther2?: string;
+  trainingOther3?: string;
+  ppeRequirements: string[];
+  fourGasRequirements: string[];
+  fourGasOther?: string;
+  fiveGasRequirements: string[];
+  fiveGasOther?: string;
+  generalRequirements?: string;
+  vehicles?: string;
+  loto?: string;
+  confinedSpace?: string;
+  hazardAssessment?: string;
+  geckoJsa?: string;
+  submitTo?: string;
+  customerProvidedJsa?: string;
+  electrical?: string;
+  permits?: string;
+  incidentReporting?: string;
+  heatStress?: string;
+  environmental?: string;
+  housekeeping?: string;
+  barricades?: string;
+  scaffoldingTags: string[];
+  droppedObjects?: string;
+  jobSpecific?: string;
+  siteContact?: string;
+  sitePhoneNumber?: string;
+  siteEmail?: string;
+  safetyContact?: string;
+  safetyPhoneNumber?: string;
+  safetyEmail?: string;
+  additionalHazards?: string;
+  previousIncidents?: string;
 }

@@ -10,7 +10,7 @@ Production deployment is triggered from a semver release tag after the repositor
 
 - Opens a Slack modal from a shortcut or App Home flow
 - Searches Jira Epics live for the selected workflow
-- Creates `Bug` or `EOD Report` issues in Jira
+- Creates `Bug`, `EOD Report`, or `Task` issues in Jira
 - Attaches the selected Epic as the parent
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
 - Optionally posts a confirmation message to a Slack test channel
@@ -35,6 +35,15 @@ The repo currently includes:
 - Additional Bug fields:
   - `RUG Blocker Type`
   - `RUG Ops Downtime (hours)`
+- Label: `EHS Jobs`
+- Key: `ehs_jobs`
+- Jira project: `EHSJOB`
+- Allowed work types:
+  - `Task`
+- Epic search scope:
+  - `project = EHSJOB AND issuetype = Epic`
+- Intake behavior:
+  - Structured EHS task intake with pre-job requirements, training, PPE, monitor, site requirement, contact, and hazard fields
 
 The EOD intake modal currently seeds `Asset Type` with:
 
@@ -134,7 +143,9 @@ Create a Jira API token for the service account and confirm that:
 - the account can create issues in `APIDD`
 - the account can search Epics in `RB`
 - the account can create issues in `RB`
-- `Bug` and `EOD Report` are standard issue types under Epic in your Jira scheme
+- the account can search Epics in `EHSJOB`
+- the account can create issues in `EHSJOB`
+- `Bug`, `EOD Report`, and `Task` are standard issue types under Epic in your Jira scheme
 - any workflow-specific required fields are either present in the modal or no longer required in Jira
 
 The initial Epic search JQL is:
@@ -153,8 +164,10 @@ For a local smoke test:
 4. Verify:
    - `API Data Delivery` only shows APIDD Epics
    - `Reporting/Job Board` only shows RB Epics
+   - `EHS Jobs` only shows EHSJOB Epics
    - RB Bug flows show the extra required fields
    - EOD flows do not show RB-only Bug fields
+   - EHS Task flows show the structured intake instead of the generic details box
    - EOD flows create a thread in `SLACK_EOD_CHANNEL_ID` or fall back to `SLACK_TEST_CHANNEL_ID`
    - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
 

@@ -1,12 +1,22 @@
 import type { App, BlockAction, BlockSuggestion, ViewSubmitAction } from "@slack/bolt";
 import { getWorkflowByKey, listWorkflows } from "../config/workflows.js";
 import { env } from "../config/env.js";
+import {
+  getEhsCheckboxActionId,
+  getEhsCheckboxBlockId,
+  getEhsCheckboxInputKeys,
+  getEhsTextActionId,
+  getEhsTextBlockId,
+  getEhsTextInputKeys,
+  type EhsModalStateValues
+} from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
 import { buildEpicSearchJql, searchEpics } from "../jira/searchEpics.js";
 import type {
   BlockerType,
   EodAssetType,
   EodCoverageUnit,
+  EhsFormValues,
   EodReportFormValues,
   EodStatus,
   EodThreadContext,
@@ -19,10 +29,12 @@ import {
   buildEodReportModal,
   decodeEodThreadContext,
   formatEodReportDetails,
+  formatEhsDetails,
   type ModalMetadata,
   requiresBugSpecificFields,
   selectedIssueTypeFromValue,
-  shouldCollectEodInThread
+  shouldCollectEodInThread,
+  usesEhsSpecificFields
 } from "./modal.js";
 
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
@@ -53,6 +65,20 @@ function getPlainTextValue(
   }
 
   return undefined;
+}
+
+function getSelectedOptionsValues(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string[] {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "selected_options" in action) {
+    return action.selected_options?.map((option) => option.value) ?? [];
+  }
+
+  return [];
 }
 
 function getDateValue(
@@ -114,7 +140,7 @@ function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
 
 function getSelectedIssueTypeFromState(
   stateValues?: ViewSubmitAction["view"]["state"]["values"]
-): Exclude<"Bug" | "EOD Report" | "Epic", "Epic"> {
+): Exclude<"Bug" | "EOD Report" | "Task" | "Epic", "Epic"> {
   return selectedIssueTypeFromValue(
     getSelectedOptionValue(stateValues?.[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction]) ??
       "Bug"
@@ -158,6 +184,24 @@ function parseEodStatus(value?: string): EodStatus | undefined {
     : undefined;
 }
 
+function getEhsModalStateValues(stateValues?: ModalState): EhsModalStateValues {
+  const state: EhsModalStateValues = {};
+
+  for (const key of getEhsTextInputKeys()) {
+    state[key] = getPlainTextValue(stateValues, getEhsTextBlockId(key), getEhsTextActionId(key)) as never;
+  }
+
+  for (const key of getEhsCheckboxInputKeys()) {
+    state[key] = getSelectedOptionsValues(
+      stateValues,
+      getEhsCheckboxBlockId(key),
+      getEhsCheckboxActionId(key)
+    ) as never;
+  }
+
+  return state;
+}
+
 function getModalStateValues(stateValues?: ModalState) {
   const parentEpicSelection = stateValues?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction];
   const blockerTypeValue = getSelectedOptionValue(
@@ -177,7 +221,8 @@ function getModalStateValues(stateValues?: ModalState) {
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
     blockerType: parseBlockerType(blockerTypeValue),
-    opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction)
+    opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction),
+    ehs: getEhsModalStateValues(stateValues)
   };
 }
 
@@ -346,7 +391,7 @@ function buildHomeView() {
         text: {
           type: "mrkdwn" as const,
           text:
-            "*Gecko Reporting Workflow*\nCreate Jira reporting issues from Slack for the configured workflow."
+            "*Gecko Reporting Workflow*\nCreate Jira Bugs, EOD Reports, and EHS Tasks from Slack for the configured workflow."
         }
       },
       {
@@ -371,12 +416,12 @@ function buildChannelEntryMessage() {
   return [
     {
       type: "section" as const,
-      text: {
-        type: "mrkdwn" as const,
-        text:
-          "*Gecko Reporting Workflow*\nUse this button to create Jira Bugs and EOD Reports for API Data Delivery or Reporting/Job Board."
-      }
-    },
+        text: {
+          type: "mrkdwn" as const,
+          text:
+            "*Gecko Reporting Workflow*\nUse this button to create Jira Bugs, EOD Reports, and EHS Tasks for the supported workflows."
+        }
+      },
     {
       type: "actions" as const,
       elements: [
@@ -633,6 +678,100 @@ function validateEodForm(values: ModalState | undefined) {
       crewOffSite: crewOffSite as string,
       notes: notes?.trim() || undefined
     } satisfies EodReportFormValues
+  };
+}
+
+function validateEhsForm(values: ModalState | undefined) {
+  const errors: Record<string, string> = {};
+  const taskSummary = getPlainTextValue(
+    values,
+    getEhsTextBlockId("taskSummary"),
+    getEhsTextActionId("taskSummary")
+  );
+  const siteContact = getPlainTextValue(
+    values,
+    getEhsTextBlockId("siteContact"),
+    getEhsTextActionId("siteContact")
+  );
+  const sitePhoneNumber = getPlainTextValue(
+    values,
+    getEhsTextBlockId("sitePhoneNumber"),
+    getEhsTextActionId("sitePhoneNumber")
+  );
+  const siteEmail = getPlainTextValue(values, getEhsTextBlockId("siteEmail"), getEhsTextActionId("siteEmail"));
+  const normalizedTaskSummary = taskSummary?.trim();
+
+  if (!normalizedTaskSummary) {
+    errors[getEhsTextBlockId("taskSummary")] = "Task Summary is required.";
+  }
+
+  if (!siteContact?.trim()) {
+    errors[getEhsTextBlockId("siteContact")] = "Site Contact is required.";
+  }
+
+  if (!sitePhoneNumber?.trim()) {
+    errors[getEhsTextBlockId("sitePhoneNumber")] = "Site Contact Phone Number is required.";
+  }
+
+  if (!siteEmail?.trim()) {
+    errors[getEhsTextBlockId("siteEmail")] = "Site Contact Email is required.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return {
+      success: false as const,
+      errors
+    };
+  }
+
+  const ehsState = getEhsModalStateValues(values);
+  const trim = (value?: string) => value?.trim() || undefined;
+
+  return {
+    success: true as const,
+    summary: normalizedTaskSummary as string,
+    values: {
+      drugTesting: trim(ehsState.drugTesting),
+      backgroundChecks: trim(ehsState.backgroundChecks),
+      forms: trim(ehsState.forms),
+      idRequirements: ehsState.idRequirements ?? [],
+      idOther: trim(ehsState.idOther),
+      trainingSiteSpecific: trim(ehsState.trainingSiteSpecific),
+      trainingOther1: trim(ehsState.trainingOther1),
+      trainingOther2: trim(ehsState.trainingOther2),
+      trainingOther3: trim(ehsState.trainingOther3),
+      ppeRequirements: ehsState.ppeRequirements ?? [],
+      fourGasRequirements: ehsState.fourGasRequirements ?? [],
+      fourGasOther: trim(ehsState.fourGasOther),
+      fiveGasRequirements: ehsState.fiveGasRequirements ?? [],
+      fiveGasOther: trim(ehsState.fiveGasOther),
+      generalRequirements: trim(ehsState.generalRequirements),
+      vehicles: trim(ehsState.vehicles),
+      loto: trim(ehsState.loto),
+      confinedSpace: trim(ehsState.confinedSpace),
+      hazardAssessment: trim(ehsState.hazardAssessment),
+      geckoJsa: trim(ehsState.geckoJsa),
+      submitTo: trim(ehsState.submitTo),
+      customerProvidedJsa: trim(ehsState.customerProvidedJsa),
+      electrical: trim(ehsState.electrical),
+      permits: trim(ehsState.permits),
+      incidentReporting: trim(ehsState.incidentReporting),
+      heatStress: trim(ehsState.heatStress),
+      environmental: trim(ehsState.environmental),
+      housekeeping: trim(ehsState.housekeeping),
+      barricades: trim(ehsState.barricades),
+      scaffoldingTags: ehsState.scaffoldingTags ?? [],
+      droppedObjects: trim(ehsState.droppedObjects),
+      jobSpecific: trim(ehsState.jobSpecific),
+      siteContact: trim(siteContact),
+      sitePhoneNumber: trim(sitePhoneNumber),
+      siteEmail: trim(siteEmail),
+      safetyContact: trim(ehsState.safetyContact),
+      safetyPhoneNumber: trim(ehsState.safetyPhoneNumber),
+      safetyEmail: trim(ehsState.safetyEmail),
+      additionalHazards: trim(ehsState.additionalHazards),
+      previousIncidents: trim(ehsState.previousIncidents)
+    } satisfies EhsFormValues
   };
 }
 
@@ -914,14 +1053,15 @@ export function registerSlackHandlers(app: App): void {
 
     const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
     const isEod = selectedIssueType === "EOD Report";
+    const isEhsTask = selectedIssueType ? usesEhsSpecificFields(workflow, selectedIssueType) : false;
 
-    if (!parentEpicKey || !issueTypeValue || (!isEod && !summary)) {
+    if (!parentEpicKey || !issueTypeValue || (!isEod && !isEhsTask && !summary)) {
       await ack({
         response_action: "errors",
         errors: {
           ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
-          ...(isEod || summary
+          ...(isEod || isEhsTask || summary
             ? {}
             : { [CALLBACKS.summaryBlock]: "Summary is required." })
         }
@@ -939,7 +1079,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (!isEod && !details) {
+    if (!isEod && !isEhsTask && !details) {
       await ack({
         response_action: "errors",
         errors: {
@@ -973,6 +1113,16 @@ export function registerSlackHandlers(app: App): void {
       }
     }
 
+    const ehsValidation = isEhsTask ? validateEhsForm(values) : undefined;
+
+    if (ehsValidation && !ehsValidation.success) {
+      await ack({
+        response_action: "errors",
+        errors: ehsValidation.errors
+      });
+      return;
+    }
+
     await ack();
 
     try {
@@ -997,12 +1147,20 @@ export function registerSlackHandlers(app: App): void {
         return;
       }
 
+      let issueSummary = summary ?? "";
+      let issueDetails = details ?? "";
+
+      if (ehsValidation?.success) {
+        issueSummary = ehsValidation.summary;
+        issueDetails = formatEhsDetails(ehsValidation.values);
+      }
+
       const issue = await createIssue({
         workflow,
         issueType: selectedIssueType,
         parentEpicKey,
-        summary: summary ?? "",
-        details: details ?? "",
+        summary: issueSummary,
+        details: issueDetails,
         requesterName: body.user.id,
         blockerType: parseBlockerType(blockerTypeValue),
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
@@ -1014,7 +1172,7 @@ export function registerSlackHandlers(app: App): void {
         issueType: selectedIssueType,
         requesterId: body.user.id,
         issueKey: issue.key,
-        issueSummary: summary ?? "",
+        issueSummary: issueSummary,
         parentEpicKey,
         parentEpicSummary: getEpicSummaryFromLabel(parentEpicLabel, parentEpicKey)
       });
