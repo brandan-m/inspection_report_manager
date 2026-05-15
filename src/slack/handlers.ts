@@ -147,6 +147,10 @@ function getSelectedIssueTypeFromState(
   );
 }
 
+function getDefaultIssueTypeForWorkflow(workflowKey: string) {
+  return getWorkflowByKey(workflowKey).allowedIssueTypes[0];
+}
+
 function parseBlockerType(value?: string): BlockerType | undefined {
   return value === "Customer" ||
     value === "Operations" ||
@@ -922,7 +926,9 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(workflowKey);
     const selectedIssueTypeValue = getSelectedOptionValue(body.actions[0]);
     const state = getModalStateValues(body.view.state.values);
-    const selectedIssueType = selectedIssueTypeFromValue(selectedIssueTypeValue ?? "Bug");
+    const selectedIssueType = selectedIssueTypeFromValue(
+      selectedIssueTypeValue ?? getDefaultIssueTypeForWorkflow(workflow.key)
+    );
 
     logger.info(
       `Attempting modal issue type update for workflow ${workflow.key} to ${selectedIssueType} view=${body.view.id}`
@@ -1036,7 +1042,7 @@ export function registerSlackHandlers(app: App): void {
       values[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction] &&
       "selected_option" in values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction]
         ? values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction].selected_option?.value
-        : undefined;
+        : workflow.allowedIssueTypes[0];
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
