@@ -1,11 +1,17 @@
 import type { KnownBlock, PlainTextOption } from "@slack/types";
 import { listWorkflows } from "../config/workflows.js";
-import { buildEhsTaskBlocks, type EhsModalStateValues, formatEhsTaskDetails } from "../ehs/form.js";
+import {
+  buildEhsTaskBlocks,
+  buildEhsTaskDescriptionContent,
+  type EhsModalStateValues,
+  formatEhsTaskDetails
+} from "../ehs/form.js";
 import type {
   BlockerType,
   EodAssetType,
   EodCoverageUnit,
   EhsFormValues,
+  JiraDocNode,
   EodReportFormValues,
   EodStatus,
   EodThreadContext,
@@ -647,4 +653,8 @@ export function requiresBugSpecificFields(
 
 export function formatEhsDetails(values: EhsFormValues): string {
   return formatEhsTaskDetails(values);
+}
+
+export function buildEhsDescriptionContent(values: EhsFormValues): JiraDocNode[] {
+  return buildEhsTaskDescriptionContent(values);
 }

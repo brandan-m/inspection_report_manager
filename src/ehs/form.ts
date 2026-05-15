@@ -1,5 +1,5 @@
 import type { KnownBlock, PlainTextOption } from "@slack/types";
-import type { EhsFormValues } from "../types/workflow.js";
+import type { EhsFormValues, JiraDocNode, JiraTextNode } from "../types/workflow.js";
 
 interface TextFieldDefinition {
   key: keyof EhsFormValues | "taskSummary";
@@ -332,6 +332,21 @@ function joinSelections(values: string[]): string | undefined {
   return values.length > 0 ? values.join(", ") : undefined;
 }
 
+function boldText(text: string): JiraTextNode {
+  return {
+    type: "text",
+    text,
+    marks: [{ type: "strong" }]
+  };
+}
+
+function plainText(text: string): JiraTextNode {
+  return {
+    type: "text",
+    text
+  };
+}
+
 export function formatEhsTaskDetails(values: EhsFormValues): string {
   const sections: Array<{ heading: string; rows: Array<[string, string | undefined]> }> = [
     {
@@ -433,4 +448,117 @@ export function formatEhsTaskDetails(values: EhsFormValues): string {
     })
     .filter((section): section is string => Boolean(section))
     .join("\n\n");
+}
+
+export function buildEhsTaskDescriptionContent(values: EhsFormValues): JiraDocNode[] {
+  const sections: Array<{ heading: string; rows: Array<[string, string | undefined]> }> = [
+    {
+      heading: "Pre-Job Requirements",
+      rows: [
+        ["Drug Testing", presentValue(values.drugTesting)],
+        ["Background Checks", presentValue(values.backgroundChecks)],
+        ["Forms", presentValue(values.forms)]
+      ]
+    },
+    {
+      heading: "ID",
+      rows: [
+        ["Requirements", joinSelections(values.idRequirements)],
+        ["Other", presentValue(values.idOther)]
+      ]
+    },
+    {
+      heading: "Training Requirements",
+      rows: [
+        ["Site Specific", presentValue(values.trainingSiteSpecific)],
+        ["Other 1", presentValue(values.trainingOther1)],
+        ["Other 2", presentValue(values.trainingOther2)],
+        ["Other 3", presentValue(values.trainingOther3)]
+      ]
+    },
+    {
+      heading: "PPE Requirements",
+      rows: [["Selections", joinSelections(values.ppeRequirements)]]
+    },
+    {
+      heading: "Monitors",
+      rows: [
+        ["Selections", joinSelections(values.fourGasRequirements)],
+        ["Other", presentValue(values.fourGasOther)]
+      ]
+    },
+    {
+      heading: "5-Gas",
+      rows: [
+        ["Selections", joinSelections(values.fiveGasRequirements)],
+        ["Other", presentValue(values.fiveGasOther)]
+      ]
+    },
+    {
+      heading: "Site Specific Requirements",
+      rows: [
+        ["General Requirements", presentValue(values.generalRequirements)],
+        ["Vehicles", presentValue(values.vehicles)],
+        ["LOTO", presentValue(values.loto)],
+        ["Confined Space", presentValue(values.confinedSpace)],
+        ["Hazard Assessment", presentValue(values.hazardAssessment)],
+        ["Gecko JSA", presentValue(values.geckoJsa)],
+        ["Submit To", presentValue(values.submitTo)],
+        ["Customer Provided JSA", presentValue(values.customerProvidedJsa)],
+        ["Electrical", presentValue(values.electrical)],
+        ["Permits", presentValue(values.permits)],
+        ["Incident Reporting", presentValue(values.incidentReporting)],
+        ["Heat Stress", presentValue(values.heatStress)],
+        ["Environmental", presentValue(values.environmental)],
+        ["Housekeeping", presentValue(values.housekeeping)],
+        ["Barricades", presentValue(values.barricades)],
+        ["Scaffolding Tags", joinSelections(values.scaffoldingTags)],
+        ["Dropped Objects", presentValue(values.droppedObjects)],
+        ["Job Specific", presentValue(values.jobSpecific)]
+      ]
+    },
+    {
+      heading: "Contacts",
+      rows: [
+        ["Site Contact", presentValue(values.siteContact)],
+        ["Site Phone Number", presentValue(values.sitePhoneNumber)],
+        ["Site Email", presentValue(values.siteEmail)],
+        ["Safety Contact", presentValue(values.safetyContact)],
+        ["Safety Phone Number", presentValue(values.safetyPhoneNumber)],
+        ["Safety Email", presentValue(values.safetyEmail)]
+      ]
+    },
+    {
+      heading: "Hazards",
+      rows: [
+        ["Additional Hazards", presentValue(values.additionalHazards)],
+        ["Previous Incidents / Near Misses", presentValue(values.previousIncidents)]
+      ]
+    }
+  ];
+
+  return sections.flatMap((section) => {
+    const rows = section.rows.filter(([, value]) => value);
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        type: "heading",
+        attrs: {
+          level: 2
+        },
+        content: [plainText(section.heading)]
+      } satisfies JiraDocNode,
+      ...rows.map(
+        ([label, value]) =>
+          ({
+            type: "paragraph",
+            content: [boldText(`${label}: `), plainText(value as string)]
+          }) satisfies JiraDocNode
+      )
+    ];
+  });
 }

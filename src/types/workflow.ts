@@ -21,12 +21,36 @@ export interface WorkflowDefinition {
   intakeForm?: "generic" | "ehs";
 }
 
+export interface JiraTextNode {
+  type: "text";
+  text: string;
+  marks?: Array<{
+    type: "strong";
+  }>;
+}
+
+export interface JiraParagraphNode {
+  type: "paragraph";
+  content: JiraTextNode[];
+}
+
+export interface JiraHeadingNode {
+  type: "heading";
+  attrs: {
+    level: 2;
+  };
+  content: JiraTextNode[];
+}
+
+export type JiraDocNode = JiraParagraphNode | JiraHeadingNode;
+
 export interface CreateIssueInput {
   workflow: WorkflowDefinition;
   issueType: SelectableIssueType;
   parentEpicKey: string;
   summary: string;
   details: string;
+  descriptionContent?: JiraDocNode[];
   requesterName?: string;
   blockerType?: BlockerType;
   opsDowntimeHours?: number;

@@ -27,6 +27,7 @@ import {
   buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
+  buildEhsDescriptionContent,
   decodeEodThreadContext,
   formatEodReportDetails,
   formatEhsDetails,
@@ -1155,10 +1156,12 @@ export function registerSlackHandlers(app: App): void {
 
       let issueSummary = summary ?? "";
       let issueDetails = details ?? "";
+      let descriptionContent = undefined;
 
       if (ehsValidation?.success) {
         issueSummary = ehsValidation.summary;
         issueDetails = formatEhsDetails(ehsValidation.values);
+        descriptionContent = buildEhsDescriptionContent(ehsValidation.values);
       }
 
       const issue = await createIssue({
@@ -1167,6 +1170,7 @@ export function registerSlackHandlers(app: App): void {
         parentEpicKey,
         summary: issueSummary,
         details: issueDetails,
+        descriptionContent,
         requesterName: body.user.id,
         blockerType: parseBlockerType(blockerTypeValue),
         opsDowntimeHours: downtimeValue ? Number(downtimeValue) : undefined
