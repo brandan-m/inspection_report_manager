@@ -12,5 +12,13 @@
     "jiraProjectKey": "RB",
     "allowedIssueTypes": ["Bug", "EOD Report"],
     "epicSearchJql": "project = RB AND issuetype = Epic"
+  },
+  {
+    "key": "ehs_jobs",
+    "label": "EHS Jobs",
+    "jiraProjectKey": "EHSJOB",
+    "allowedIssueTypes": ["Task"],
+    "epicSearchJql": "project = EHSJOB AND issuetype = Epic",
+    "intakeForm": "ehs"
   }
 ]

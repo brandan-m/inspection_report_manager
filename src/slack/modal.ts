@@ -1,9 +1,11 @@
 import type { KnownBlock, PlainTextOption } from "@slack/types";
 import { listWorkflows } from "../config/workflows.js";
+import { buildEhsTaskBlocks, type EhsModalStateValues, formatEhsTaskDetails } from "../ehs/form.js";
 import type {
   BlockerType,
   EodAssetType,
   EodCoverageUnit,
+  EhsFormValues,
   EodReportFormValues,
   EodStatus,
   EodThreadContext,
@@ -118,6 +120,7 @@ export interface ModalStateValues {
   details?: string;
   blockerType?: BlockerType;
   opsDowntimeHours?: string;
+  ehs?: EhsModalStateValues;
 }
 
 export interface ModalMetadata {
@@ -141,6 +144,10 @@ function bugFieldPlaceholder(workflow: WorkflowDefinition): string {
   return workflow.jiraProjectKey === "APIDD"
     ? "Required for API Data Delivery Bugs"
     : "Required for Reporting/Job Board Bugs";
+}
+
+function usesEhsIntake(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
+  return workflow.intakeForm === "ehs" && issueType === "Task";
 }
 
 export function shouldCollectEodInThread(issueType: SelectableIssueType): boolean {
@@ -271,7 +278,9 @@ export function buildCreateIssueModal(
     });
   }
 
-  if (!shouldCollectEodInThread(selectedIssueType)) {
+  if (usesEhsIntake(defaultWorkflow, selectedIssueType)) {
+    blocks.push(...buildEhsTaskBlocks(state.ehs));
+  } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
         CALLBACKS.summaryBlock,
@@ -601,11 +610,18 @@ export function buildEodReportSummary(values: EodReportFormValues): string {
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {
-  if (value !== "Bug" && value !== "EOD Report") {
+  if (value !== "Bug" && value !== "EOD Report" && value !== "Task") {
     throw new Error(`Unsupported issue type: ${value}`);
   }
 
   return value;
+}
+
+export function usesEhsSpecificFields(
+  workflow: WorkflowDefinition,
+  issueType: Exclude<SupportedIssueType, "Epic">
+): boolean {
+  return usesEhsIntake(workflow, issueType);
 }
 
 export function requiresReportingBugFields(
@@ -620,4 +636,8 @@ export function requiresBugSpecificFields(
   issueType: Exclude<SupportedIssueType, "Epic">
 ): boolean {
   return requiresBugFields(workflow, issueType);
+}
+
+export function formatEhsDetails(values: EhsFormValues): string {
+  return formatEhsTaskDetails(values);
 }
