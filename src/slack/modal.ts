@@ -150,6 +150,10 @@ function usesEhsIntake(workflow: WorkflowDefinition, issueType: SelectableIssueT
   return workflow.intakeForm === "ehs" && issueType === "Task";
 }
 
+function shouldShowIssueTypeSelector(workflow: WorkflowDefinition): boolean {
+  return workflow.allowedIssueTypes.length > 1;
+}
+
 export function shouldCollectEodInThread(issueType: SelectableIssueType): boolean {
   return issueType === "EOD Report";
 }
@@ -208,7 +212,10 @@ export function buildCreateIssueModal(
         }
       }
     },
-    {
+  ];
+
+  if (shouldShowIssueTypeSelector(defaultWorkflow)) {
+    blocks.push({
       type: "section",
       block_id: CALLBACKS.issueTypeBlock,
       text: {
@@ -227,8 +234,8 @@ export function buildCreateIssueModal(
         },
         options: issueTypeOptions(defaultWorkflow)
       }
-    }
-  ];
+    });
+  }
 
   if (requiresBugFields(defaultWorkflow, selectedIssueType)) {
     blocks.splice(3, 0, {
