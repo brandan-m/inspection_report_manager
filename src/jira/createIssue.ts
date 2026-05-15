@@ -38,6 +38,18 @@ async function getCreateFields(projectKey: string, issueType: string) {
 }
 
 export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIssueResponse> {
+  const descriptionContent = input.descriptionContent ?? [
+    {
+      type: "paragraph" as const,
+      content: [
+        {
+          type: "text" as const,
+          text: input.details
+        }
+      ]
+    }
+  ];
+
   const fields: Record<string, unknown> = {
     project: {
       key: input.workflow.jiraProjectKey
@@ -53,15 +65,7 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
       type: "doc",
       version: 1,
       content: [
-        {
-          type: "paragraph",
-          content: [
-            {
-              type: "text",
-              text: input.details
-            }
-          ]
-        },
+        ...descriptionContent,
         ...(input.requesterName
           ? [
               {
