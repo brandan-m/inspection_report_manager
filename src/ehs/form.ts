@@ -31,11 +31,9 @@ const PPE_OPTIONS = [
   "Safety Toed Boots",
   "Metatarsals",
   "Fall Protection",
-  "Harness for Confined Space Rescue",
-  "Gloves specific to task",
-  "Monitors",
-  "Other"
+  "Harness for Confined Space Rescue"
 ];
+const PPE_SPECIAL_OPTIONS = ["Gloves specific to task", "Monitors", "Other"];
 const MONITOR_OPTIONS = ["Confined Space Area", "4-Gas Personal", "Solo Gas", "5-Gas"];
 const SOLO_GAS_OPTIONS = [
   "Carbon Monoxide (CO)",
@@ -271,6 +269,12 @@ const CHECKBOX_FIELD_DEFINITIONS: CheckboxFieldDefinition[] = [
     optional: true
   },
   {
+    key: "ppeSpecialRequirements",
+    label: "PPE Additional",
+    options: PPE_SPECIAL_OPTIONS,
+    optional: true
+  },
+  {
     key: "monitorRequirements",
     label: "Monitors",
     options: MONITOR_OPTIONS,
@@ -430,8 +434,8 @@ function renderCheckboxField(key: keyof EhsFormValues, state: EhsModalStateValue
 export function buildEhsTaskBlocks(state: EhsModalStateValues = {}): KnownBlock[] {
   const showDrugTestingInfo = isSelected(state.drugTestingSelections);
   const showFormsInfo = isSelected(state.formsSelections);
-  const showPpeOther = includesValue(state.ppeRequirements, "Other");
-  const showMonitorsSection = includesValue(state.ppeRequirements, "Monitors");
+  const showPpeOther = includesValue(state.ppeSpecialRequirements, "Other");
+  const showMonitorsSection = includesValue(state.ppeSpecialRequirements, "Monitors");
   const showSoloGasSection = includesValue(state.monitorRequirements, "Solo Gas");
   const showFiveGasSection = includesValue(state.monitorRequirements, "5-Gas");
 
@@ -447,7 +451,8 @@ export function buildEhsTaskBlocks(state: EhsModalStateValues = {}): KnownBlock[
     headingBlock("Training Requirements"),
     renderTextField("trainingRequirements", state),
     headingBlock("PPE Requirements"),
-    renderCheckboxField("ppeRequirements", state)
+    renderCheckboxField("ppeRequirements", state),
+    renderCheckboxField("ppeSpecialRequirements", state)
   ];
 
   if (showDrugTestingInfo) {
@@ -520,7 +525,7 @@ export function getEhsCheckboxInputKeys(): Array<CheckboxFieldDefinition["key"]>
 }
 
 export function getEhsReactiveCheckboxKeys(): Array<CheckboxFieldDefinition["key"]> {
-  return ["drugTestingSelections", "formsSelections", "ppeRequirements", "monitorRequirements"];
+  return ["drugTestingSelections", "formsSelections", "ppeSpecialRequirements", "monitorRequirements"];
 }
 
 export function getEhsTextBlockId(key: TextFieldDefinition["key"]): string {
@@ -553,6 +558,8 @@ function selectedLabel(values: string[] | undefined): string | undefined {
 }
 
 function buildEhsSections(values: EhsFormValues): Array<{ heading: string; rows: Array<[string, string | undefined]> }> {
+  const ppeSelections = [...values.ppeRequirements, ...values.ppeSpecialRequirements];
+
   return [
     {
       heading: "Pre-Job Requirements",
@@ -578,7 +585,7 @@ function buildEhsSections(values: EhsFormValues): Array<{ heading: string; rows:
     {
       heading: "PPE Requirements",
       rows: [
-        ["Selections", joinSelections(values.ppeRequirements)],
+        ["Selections", joinSelections(ppeSelections)],
         ["Other", presentValue(values.ppeOther)]
       ]
     },
