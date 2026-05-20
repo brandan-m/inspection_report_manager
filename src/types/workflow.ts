@@ -90,28 +90,27 @@ export interface EodThreadContext {
 }
 
 export interface EhsFormValues {
-  drugTesting?: string;
-  backgroundChecks?: string;
-  forms?: string;
+  drugTestingSelections: string[];
+  drugTestingInfo?: string;
+  backgroundCheckSelections: string[];
+  formsSelections: string[];
+  formsInfo?: string;
   idRequirements: string[];
   idOther?: string;
-  trainingSiteSpecific?: string;
-  trainingOther1?: string;
-  trainingOther2?: string;
-  trainingOther3?: string;
+  trainingRequirements?: string;
   ppeRequirements: string[];
-  fourGasRequirements: string[];
-  fourGasOther?: string;
-  fiveGasRequirements: string[];
+  ppeOther?: string;
+  monitorRequirements: string[];
+  soloGasRequirements: string[];
+  fiveGasDetails: string[];
   fiveGasOther?: string;
   generalRequirements?: string;
   vehicles?: string;
   loto?: string;
   confinedSpace?: string;
   hazardAssessment?: string;
-  geckoJsa?: string;
   submitTo?: string;
-  customerProvidedJsa?: string;
+  jsaRequirements: string[];
   electrical?: string;
   permits?: string;
   incidentReporting?: string;
