@@ -240,6 +240,31 @@ function formatJiraErrorMessage(error: unknown): string {
   return error.message.replace(/^Jira request failed \(\d+\):\s*/, "");
 }
 
+function formatSlackApiErrorDetails(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return String(error);
+  }
+
+  const details = error as {
+    data?: {
+      error?: string;
+      response_metadata?: {
+        messages?: string[];
+      };
+    };
+    message?: string;
+  };
+
+  const errorCode = details.data?.error ?? details.message ?? "unknown_error";
+  const messages = details.data?.response_metadata?.messages ?? [];
+
+  if (messages.length === 0) {
+    return errorCode;
+  }
+
+  return `${errorCode}: ${messages.join(" | ")}`;
+}
+
 function escapeSlackText(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -495,7 +520,7 @@ async function updateModalView(
     });
     return;
   } catch (error) {
-    logger.warn(`${context} failed with hash. Retrying without hash.`, error);
+    logger.warn(`${context} failed with hash. Retrying without hash. ${formatSlackApiErrorDetails(error)}`);
   }
 
   try {
@@ -504,7 +529,7 @@ async function updateModalView(
       view: input.view
     });
   } catch (error) {
-    logger.error(`${context} failed without hash as well.`, error);
+    logger.error(`${context} failed without hash as well. ${formatSlackApiErrorDetails(error)}`);
     throw error;
   }
 }
