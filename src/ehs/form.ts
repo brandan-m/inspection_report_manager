@@ -49,13 +49,13 @@ const SCAFFOLDING_TAG_OPTIONS = ["Green Tag", "Yellow Tag"];
 const TEXT_FIELD_DEFINITIONS: TextFieldDefinition[] = [
   {
     key: "drugTestingInfo",
-    label: "Drug Screen Info",
+    label: "Drug Screen Info (optional)",
     placeholder: "Drug screen requirements",
     optional: true
   },
   {
     key: "formsInfo",
-    label: "Form Info",
+    label: "Forms Info (optional)",
     placeholder: "Required forms",
     optional: true
   },
@@ -442,26 +442,30 @@ export function buildEhsTaskBlocks(state: EhsModalStateValues = {}): KnownBlock[
   const blocks: KnownBlock[] = [
     headingBlock("EHS Intake"),
     headingBlock("Pre-Job Requirements"),
-    renderCheckboxField("drugTestingSelections", state),
-    renderCheckboxField("backgroundCheckSelections", state),
-    renderCheckboxField("formsSelections", state),
-    headingBlock("ID Requirements"),
-    renderCheckboxField("idRequirements", state),
-    renderTextField("idOther", state),
-    headingBlock("Training Requirements"),
-    renderTextField("trainingRequirements", state),
-    headingBlock("PPE Requirements"),
-    renderCheckboxField("ppeRequirements", state),
-    renderCheckboxField("ppeSpecialRequirements", state)
+    renderCheckboxField("drugTestingSelections", state)
   ];
 
   if (showDrugTestingInfo) {
     blocks.push(renderTextField("drugTestingInfo", state));
   }
 
+  blocks.push(
+    renderCheckboxField("backgroundCheckSelections", state),
+    renderCheckboxField("formsSelections", state)
+  );
+
   if (showFormsInfo) {
     blocks.push(renderTextField("formsInfo", state));
   }
+
+  blocks.push(
+    renderCheckboxField("idRequirements", state),
+    renderTextField("idOther", state),
+    renderTextField("trainingRequirements", state),
+    headingBlock("PPE Requirements"),
+    renderCheckboxField("ppeRequirements", state),
+    renderCheckboxField("ppeSpecialRequirements", state)
+  );
 
   if (showPpeOther) {
     blocks.push(renderTextField("ppeOther", state));
@@ -471,12 +475,11 @@ export function buildEhsTaskBlocks(state: EhsModalStateValues = {}): KnownBlock[
     blocks.push(headingBlock("Monitors"), renderCheckboxField("monitorRequirements", state));
 
     if (showSoloGasSection) {
-      blocks.push(headingBlock("Solo Gas"), renderCheckboxField("soloGasRequirements", state));
+      blocks.push(renderCheckboxField("soloGasRequirements", state));
     }
 
     if (showFiveGasSection) {
       blocks.push(
-        headingBlock("5-Gas"),
         renderCheckboxField("fiveGasDetails", state),
         renderTextField("fiveGasOther", state)
       );
