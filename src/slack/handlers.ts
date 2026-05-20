@@ -5,6 +5,7 @@ import {
   getEhsCheckboxActionId,
   getEhsCheckboxBlockId,
   getEhsCheckboxInputKeys,
+  getEhsReactiveCheckboxKeys,
   getEhsTextActionId,
   getEhsTextBlockId,
   getEhsTextInputKeys,
@@ -688,11 +689,6 @@ function validateEodForm(values: ModalState | undefined) {
 
 function validateEhsForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
-  const taskSummary = getPlainTextValue(
-    values,
-    getEhsTextBlockId("taskSummary"),
-    getEhsTextActionId("taskSummary")
-  );
   const siteContact = getPlainTextValue(
     values,
     getEhsTextBlockId("siteContact"),
@@ -704,11 +700,6 @@ function validateEhsForm(values: ModalState | undefined) {
     getEhsTextActionId("sitePhoneNumber")
   );
   const siteEmail = getPlainTextValue(values, getEhsTextBlockId("siteEmail"), getEhsTextActionId("siteEmail"));
-  const normalizedTaskSummary = taskSummary?.trim();
-
-  if (!normalizedTaskSummary) {
-    errors[getEhsTextBlockId("taskSummary")] = "Task Summary is required.";
-  }
 
   if (!siteContact?.trim()) {
     errors[getEhsTextBlockId("siteContact")] = "Site Contact is required.";
@@ -734,30 +725,29 @@ function validateEhsForm(values: ModalState | undefined) {
 
   return {
     success: true as const,
-    summary: normalizedTaskSummary as string,
+    summary: "Site Requirements",
     values: {
-      drugTesting: trim(ehsState.drugTesting),
-      backgroundChecks: trim(ehsState.backgroundChecks),
-      forms: trim(ehsState.forms),
+      drugTestingSelections: ehsState.drugTestingSelections ?? [],
+      drugTestingInfo: trim(ehsState.drugTestingInfo),
+      backgroundCheckSelections: ehsState.backgroundCheckSelections ?? [],
+      formsSelections: ehsState.formsSelections ?? [],
+      formsInfo: trim(ehsState.formsInfo),
       idRequirements: ehsState.idRequirements ?? [],
       idOther: trim(ehsState.idOther),
-      trainingSiteSpecific: trim(ehsState.trainingSiteSpecific),
-      trainingOther1: trim(ehsState.trainingOther1),
-      trainingOther2: trim(ehsState.trainingOther2),
-      trainingOther3: trim(ehsState.trainingOther3),
+      trainingRequirements: trim(ehsState.trainingRequirements),
       ppeRequirements: ehsState.ppeRequirements ?? [],
-      fourGasRequirements: ehsState.fourGasRequirements ?? [],
-      fourGasOther: trim(ehsState.fourGasOther),
-      fiveGasRequirements: ehsState.fiveGasRequirements ?? [],
+      ppeOther: trim(ehsState.ppeOther),
+      monitorRequirements: ehsState.monitorRequirements ?? [],
+      soloGasRequirements: ehsState.soloGasRequirements ?? [],
+      fiveGasDetails: ehsState.fiveGasDetails ?? [],
       fiveGasOther: trim(ehsState.fiveGasOther),
       generalRequirements: trim(ehsState.generalRequirements),
       vehicles: trim(ehsState.vehicles),
       loto: trim(ehsState.loto),
       confinedSpace: trim(ehsState.confinedSpace),
       hazardAssessment: trim(ehsState.hazardAssessment),
-      geckoJsa: trim(ehsState.geckoJsa),
       submitTo: trim(ehsState.submitTo),
-      customerProvidedJsa: trim(ehsState.customerProvidedJsa),
+      jsaRequirements: ehsState.jsaRequirements ?? [],
       electrical: trim(ehsState.electrical),
       permits: trim(ehsState.permits),
       incidentReporting: trim(ehsState.incidentReporting),
@@ -961,6 +951,44 @@ export function registerSlackHandlers(app: App): void {
 
     logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
   });
+
+  for (const key of getEhsReactiveCheckboxKeys()) {
+    app.action(getEhsCheckboxActionId(key), async ({ ack, body, client, logger }) => {
+      await ack();
+
+      if (!("view" in body) || !body.view) {
+        logger.error(`EHS checkbox action ${String(key)} did not include a modal view.`);
+        return;
+      }
+
+      const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+      const workflow = getWorkflowByKey(workflowKey);
+      const state = getModalStateValues(body.view.state.values);
+      const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+        ? state.selectedIssueType
+        : workflow.allowedIssueTypes[0];
+
+      try {
+        await client.views.update({
+          view_id: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              selectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: getChannelIdFromViewMetadata(body.view)
+            }
+          )
+        });
+      } catch (error) {
+        logger.error(`Failed EHS modal refresh for action ${String(key)}.`, error);
+      }
+    });
+  }
 
   app.action(CALLBACKS.eodStartButton, async ({ ack, body, client, logger }) => {
     await ack();
