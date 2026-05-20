@@ -369,6 +369,7 @@ function checkboxInputBlock(definition: CheckboxFieldDefinition, selectedValues?
     type: "input",
     block_id: checkboxBlockId(definition.key),
     optional: definition.optional ?? false,
+    dispatch_action: true,
     element: {
       type: "checkboxes",
       action_id: checkboxActionId(definition.key),
