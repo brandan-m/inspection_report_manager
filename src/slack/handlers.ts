@@ -240,6 +240,31 @@ function formatJiraErrorMessage(error: unknown): string {
   return error.message.replace(/^Jira request failed \(\d+\):\s*/, "");
 }
 
+function formatSlackApiErrorDetails(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return String(error);
+  }
+
+  const details = error as {
+    data?: {
+      error?: string;
+      response_metadata?: {
+        messages?: string[];
+      };
+    };
+    message?: string;
+  };
+
+  const errorCode = details.data?.error ?? details.message ?? "unknown_error";
+  const messages = details.data?.response_metadata?.messages ?? [];
+
+  if (messages.length === 0) {
+    return errorCode;
+  }
+
+  return `${errorCode}: ${messages.join(" | ")}`;
+}
+
 function escapeSlackText(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -475,6 +500,38 @@ async function openCreateIssueModal(
   });
 
   logger.info(logContext);
+}
+
+async function updateModalView(
+  client: App["client"],
+  input: {
+    viewId: string;
+    hash?: string;
+    view: Parameters<App["client"]["views"]["update"]>[0]["view"];
+  },
+  logger: Pick<Console, "warn" | "error">,
+  context: string
+) {
+  try {
+    await client.views.update({
+      view_id: input.viewId,
+      hash: input.hash,
+      view: input.view
+    });
+    return;
+  } catch (error) {
+    logger.warn(`${context} failed with hash. Retrying without hash. ${formatSlackApiErrorDetails(error)}`);
+  }
+
+  try {
+    await client.views.update({
+      view_id: input.viewId,
+      view: input.view
+    });
+  } catch (error) {
+    logger.error(`${context} failed without hash as well. ${formatSlackApiErrorDetails(error)}`);
+    throw error;
+  }
 }
 
 async function sendDirectMessage(
@@ -882,23 +939,27 @@ export function registerSlackHandlers(app: App): void {
     );
 
     try {
-      await client.views.update({
-        view_id: body.view.id,
-        hash: body.view.hash,
-        view: buildCreateIssueModal(
-          workflow,
-          {
-            ...state,
-            selectedIssueType: nextSelectedIssueType
-          },
-          {
-            workflowKey: workflow.key,
-            channelId: getChannelIdFromViewMetadata(body.view)
-          }
-        )
-      });
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              selectedIssueType: nextSelectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: getChannelIdFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal workflow update for workflow ${workflow.key}`
+      );
     } catch (error) {
-      logger.error(`Failed modal workflow update for workflow ${workflow.key}.`, error);
       return;
     }
 
@@ -926,26 +987,27 @@ export function registerSlackHandlers(app: App): void {
     );
 
     try {
-      await client.views.update({
-        view_id: body.view.id,
-        hash: body.view.hash,
-        view: buildCreateIssueModal(
-          workflow,
-          {
-            ...state,
-            selectedIssueType
-          },
-          {
-            workflowKey: workflow.key,
-            channelId: getChannelIdFromViewMetadata(body.view)
-          }
-        )
-      });
-    } catch (error) {
-      logger.error(
-        `Failed modal issue type update for workflow ${workflow.key} to ${selectedIssueType}.`,
-        error
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              selectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: getChannelIdFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal issue type update for workflow ${workflow.key} to ${selectedIssueType}`
       );
+    } catch (error) {
       return;
     }
 
@@ -969,23 +1031,28 @@ export function registerSlackHandlers(app: App): void {
         : workflow.allowedIssueTypes[0];
 
       try {
-        await client.views.update({
-          view_id: body.view.id,
-          hash: body.view.hash,
-          view: buildCreateIssueModal(
-            workflow,
-            {
-              ...state,
-              selectedIssueType
-            },
-            {
-              workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
-            }
-          )
-        });
+        await updateModalView(
+          client,
+          {
+            viewId: body.view.id,
+            hash: body.view.hash,
+            view: buildCreateIssueModal(
+              workflow,
+              {
+                ...state,
+                selectedIssueType
+              },
+              {
+                workflowKey: workflow.key,
+                channelId: getChannelIdFromViewMetadata(body.view)
+              }
+            )
+          },
+          logger,
+          `Failed EHS modal refresh for action ${String(key)}`
+        );
       } catch (error) {
-        logger.error(`Failed EHS modal refresh for action ${String(key)}.`, error);
+        return;
       }
     });
   }
