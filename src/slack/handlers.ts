@@ -793,6 +793,7 @@ function validateEhsForm(values: ModalState | undefined) {
       idOther: trim(ehsState.idOther),
       trainingRequirements: trim(ehsState.trainingRequirements),
       ppeRequirements: ehsState.ppeRequirements ?? [],
+      ppeSpecialRequirements: ehsState.ppeSpecialRequirements ?? [],
       ppeOther: trim(ehsState.ppeOther),
       monitorRequirements: ehsState.monitorRequirements ?? [],
       soloGasRequirements: ehsState.soloGasRequirements ?? [],

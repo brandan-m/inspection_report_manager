@@ -99,6 +99,7 @@ export interface EhsFormValues {
   idOther?: string;
   trainingRequirements?: string;
   ppeRequirements: string[];
+  ppeSpecialRequirements: string[];
   ppeOther?: string;
   monitorRequirements: string[];
   soloGasRequirements: string[];
