@@ -237,6 +237,22 @@ function getModalStateValues(stateValues?: ModalState) {
   };
 }
 
+function clearEodTaskSelectionIfParentChanged(
+  state: ReturnType<typeof getModalStateValues>,
+  nextParentEpicKey?: string
+) {
+  if (!nextParentEpicKey || state.parentEpicKey === nextParentEpicKey) {
+    return state;
+  }
+
+  return {
+    ...state,
+    parentEpicKey: nextParentEpicKey,
+    eodTaskKey: undefined,
+    eodTaskLabel: undefined
+  };
+}
+
 function formatJiraErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) {
     return "Could not create Jira issue.";
@@ -966,6 +982,59 @@ export function registerSlackHandlers(app: App): void {
     }
 
     logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
+  });
+
+  app.action(CALLBACKS.epicAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("Epic selection action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+    const state = getModalStateValues(body.view.state.values);
+    const selectedParentEpicKey = getSelectedOptionValue(body.actions[0]);
+    const selectedParentEpicLabel =
+      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const nextState = clearEodTaskSelectionIfParentChanged(state, selectedParentEpicKey);
+    const selectedIssueType = workflow.allowedIssueTypes.includes(nextState.selectedIssueType ?? "Bug")
+      ? nextState.selectedIssueType
+      : workflow.allowedIssueTypes[0];
+
+    logger.info(
+      `Attempting modal epic update for workflow ${workflow.key} to epic=${selectedParentEpicKey ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...nextState,
+              parentEpicKey: selectedParentEpicKey,
+              parentEpicLabel: selectedParentEpicLabel,
+              selectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: getChannelIdFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal epic update for workflow ${workflow.key}`
+      );
+    } catch {
+      return;
+    }
+
+    logger.info(`Updated modal epic for workflow ${workflow.key} to ${selectedParentEpicKey ?? "n/a"}`);
   });
 
   for (const key of getEhsReactiveCheckboxKeys()) {
