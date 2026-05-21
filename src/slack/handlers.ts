@@ -229,6 +229,11 @@ function getModalStateValues(stateValues?: ModalState) {
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     ),
+    eodAssetNumber: getPlainTextValue(
+      stateValues,
+      CALLBACKS.eodAssetNumberBlock,
+      CALLBACKS.eodAssetNumberAction
+    ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
     blockerType: parseBlockerType(blockerTypeValue),
@@ -328,6 +333,7 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
     `*Parent Inspection:* ${parentInspection}\n` +
     `*Asset:* ${assetTask}\n` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
+    `*Asset Number:* ${escapeSlackText(context.assetNumber)}\n` +
     `${context.parentTaskKey ? "" : "*Warning:* No asset task was selected for this thread.\n"}` +
     `*Created by:* <@${context.requesterId}>`;
 
@@ -379,15 +385,13 @@ function buildEodCompletionMessage(input: {
     `*Parent Inspection:* ${parentInspection}`,
     `*Asset:* ${assetTask}`,
     `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
+    `*Asset Number:* ${escapeSlackText(input.context.assetNumber)}`,
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
-    `*Asset Number:* ${escapeSlackText(input.values.assetNumber)}`,
-    `*Crew On-Site:* ${escapeSlackText(input.values.crewOnSite)}`,
+    `*Full Day Overview:* ${escapeSlackText(input.values.fullDayOverview)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
-    `*Calibration Completed:* ${escapeSlackText(input.values.calibrationCompleted)}`,
     `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
-    `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`,
-    `*Crew Off-Site:* ${escapeSlackText(input.values.crewOffSite)}`
+    `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
 
   if (input.values.notes?.trim()) {
@@ -631,15 +635,13 @@ async function createEodThread(
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
-  const assetNumber = getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction);
-  const crewOnSite = getPlainTextValue(values, CALLBACKS.eodCrewOnSiteBlock, CALLBACKS.eodCrewOnSiteAction);
+  const fullDayOverview = getPlainTextValue(
+    values,
+    CALLBACKS.eodFullDayOverviewBlock,
+    CALLBACKS.eodFullDayOverviewAction
+  );
   const jsaSubmitted = parseEodYesNo(
     getSelectedOptionValue(values?.[CALLBACKS.eodJsaSubmittedBlock]?.[CALLBACKS.eodJsaSubmittedAction])
-  );
-  const calibrationCompleted = getPlainTextValue(
-    values,
-    CALLBACKS.eodCalibrationCompletedBlock,
-    CALLBACKS.eodCalibrationCompletedAction
   );
   const scansCompletedValue = getPlainTextValue(
     values,
@@ -651,27 +653,18 @@ function validateEodForm(values: ModalState | undefined) {
     CALLBACKS.eodScanningTimeBlock,
     CALLBACKS.eodScanningTimeAction
   );
-  const crewOffSite = getPlainTextValue(values, CALLBACKS.eodCrewOffSiteBlock, CALLBACKS.eodCrewOffSiteAction);
   const notes = getPlainTextValue(values, CALLBACKS.eodNotesBlock, CALLBACKS.eodNotesAction);
 
   if (!date) {
     errors[CALLBACKS.eodDateBlock] = "Date is required.";
   }
 
-  if (!assetNumber) {
-    errors[CALLBACKS.eodAssetNumberBlock] = "Asset number is required.";
-  }
-
-  if (!crewOnSite) {
-    errors[CALLBACKS.eodCrewOnSiteBlock] = "Crew On-Site is required.";
+  if (!fullDayOverview) {
+    errors[CALLBACKS.eodFullDayOverviewBlock] = "Full Day Overview is required.";
   }
 
   if (!jsaSubmitted) {
     errors[CALLBACKS.eodJsaSubmittedBlock] = "Choose whether JSA was submitted.";
-  }
-
-  if (!calibrationCompleted) {
-    errors[CALLBACKS.eodCalibrationCompletedBlock] = "Calibration Completed is required.";
   }
 
   if (!scansCompletedValue) {
@@ -686,10 +679,6 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodScanningTimeBlock] = "Enter a valid number.";
   }
 
-  if (!crewOffSite) {
-    errors[CALLBACKS.eodCrewOffSiteBlock] = "Crew Off-Site is required.";
-  }
-
   if (Object.keys(errors).length > 0) {
     return {
       success: false as const,
@@ -701,13 +690,10 @@ function validateEodForm(values: ModalState | undefined) {
     success: true as const,
     values: {
       date: date as string,
-      assetNumber: assetNumber as string,
-      crewOnSite: crewOnSite as string,
+      fullDayOverview: fullDayOverview as string,
       jsaSubmitted: jsaSubmitted as EodYesNo,
-      calibrationCompleted: calibrationCompleted as string,
       numberOfScansCompleted: Number(scansCompletedValue),
       totalScanningTimeHours: Number(scanningTimeValue),
-      crewOffSite: crewOffSite as string,
       notes: notes?.trim() || undefined
     } satisfies EodReportFormValues
   };
@@ -1210,6 +1196,8 @@ export function registerSlackHandlers(app: App): void {
     const selectedThreadAssetType = parseEodAssetType(
       getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     );
+    const selectedThreadAssetNumber =
+      getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction) ?? "";
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -1274,6 +1262,16 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    if (isEod && !selectedThreadAssetNumber.trim()) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.eodAssetNumberBlock]: "Please enter an asset number."
+        }
+      });
+      return;
+    }
+
     if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
       const blockerTypeLabel =
@@ -1319,6 +1317,7 @@ export function registerSlackHandlers(app: App): void {
           parentTaskKey,
           parentTaskLabel,
           assetType: selectedThreadAssetType as EodAssetType,
+          assetNumber: selectedThreadAssetNumber.trim(),
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });

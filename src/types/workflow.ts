@@ -74,13 +74,10 @@ export interface IssueOption {
 
 export interface EodReportFormValues {
   date: string;
-  assetNumber: string;
-  crewOnSite: string;
+  fullDayOverview: string;
   jsaSubmitted: EodYesNo;
-  calibrationCompleted: string;
   numberOfScansCompleted: number;
   totalScanningTimeHours: number;
-  crewOffSite: string;
   notes?: string;
 }
 
@@ -91,6 +88,7 @@ export interface EodThreadContext {
   parentTaskKey?: string;
   parentTaskLabel?: string;
   assetType: EodAssetType;
+  assetNumber: string;
   requesterId: string;
   channelId: string;
   threadTs: string;
