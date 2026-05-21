@@ -88,7 +88,7 @@ export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
   parentEpicLabel?: string;
-  parentTaskKey: string;
+  parentTaskKey?: string;
   parentTaskLabel?: string;
   assetType: EodAssetType;
   requesterId: string;
