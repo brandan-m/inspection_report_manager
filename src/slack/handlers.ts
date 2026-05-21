@@ -12,14 +12,12 @@ import {
   type EhsModalStateValues
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
-import { buildEpicSearchJql, searchEpics } from "../jira/searchEpics.js";
+import { buildEpicSearchJql, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import type {
   BlockerType,
   EodAssetType,
-  EodCoverageUnit,
   EhsFormValues,
   EodReportFormValues,
-  EodStatus,
   EodThreadContext,
   EodYesNo
 } from "../types/workflow.js";
@@ -163,31 +161,26 @@ function parseBlockerType(value?: string): BlockerType | undefined {
 }
 
 function parseEodAssetType(value?: string): EodAssetType | undefined {
-  return value === "Building" ||
-    value === "Conveyor" ||
-    value === "Crusher" ||
-    value === "Stockpile" ||
+  return value === "Kiln" ||
+    value === "Hood" ||
+    value === "Above Ground Storage Tank" ||
     value === "Tank" ||
-    value === "Other"
+    value === "Drum" ||
+    value === "Vessel" ||
+    value === "Piping" ||
+    value === "SDA" ||
+    value === "Silo" ||
+    value === "Boiler" ||
+    value === "Heat Exchangers" ||
+    value === "Stacks" ||
+    value === "Spheres" ||
+    value === "Towers"
     ? value
     : undefined;
 }
 
 function parseEodYesNo(value?: string): EodYesNo | undefined {
   return value === "Yes" || value === "No" ? value : undefined;
-}
-
-function parseEodCoverageUnit(value?: string): EodCoverageUnit | undefined {
-  return value === "ft^2" || value === "m^2" ? value : undefined;
-}
-
-function parseEodStatus(value?: string): EodStatus | undefined {
-  return value === "Not Started" ||
-    value === "In Progress" ||
-    value === "Complete" ||
-    value === "Blocked"
-    ? value
-    : undefined;
 }
 
 function getEhsModalStateValues(stateValues?: ModalState): EhsModalStateValues {
@@ -210,6 +203,7 @@ function getEhsModalStateValues(stateValues?: ModalState): EhsModalStateValues {
 
 function getModalStateValues(stateValues?: ModalState) {
   const parentEpicSelection = stateValues?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction];
+  const parentTaskSelection = stateValues?.[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction];
   const blockerTypeValue = getSelectedOptionValue(
     stateValues?.[CALLBACKS.blockerTypeBlock]?.[CALLBACKS.blockerTypeAction]
   );
@@ -224,6 +218,17 @@ function getModalStateValues(stateValues?: ModalState) {
       parentEpicSelection && "selected_option" in parentEpicSelection
         ? parentEpicSelection.selected_option?.text?.text ?? undefined
         : undefined,
+    eodTaskKey:
+      parentTaskSelection && "selected_option" in parentTaskSelection
+        ? parentTaskSelection.selected_option?.value ?? undefined
+        : undefined,
+    eodTaskLabel:
+      parentTaskSelection && "selected_option" in parentTaskSelection
+        ? parentTaskSelection.selected_option?.text?.text ?? undefined
+        : undefined,
+    eodAssetType: parseEodAssetType(
+      getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
+    ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
     blockerType: parseBlockerType(blockerTypeValue),
@@ -291,11 +296,18 @@ function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey
   return context.parentEpicLabel?.trim() || context.parentEpicKey;
 }
 
+function getParentTaskLabel(context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel">): string {
+  return context.parentTaskLabel?.trim() || context.parentTaskKey;
+}
+
 function buildEodThreadStartMessage(context: EodThreadContext) {
   const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
+  const assetTask = buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context));
   const text =
     `*EOD Intake :thread:*\n` +
     `*Parent Inspection:* ${parentInspection}\n` +
+    `*Asset:* ${assetTask}\n` +
+    `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
     `*Created by:* <@${context.requesterId}>`;
 
   return {
@@ -339,25 +351,21 @@ function buildEodCompletionMessage(input: {
     input.context.parentEpicKey,
     getParentInspectionLabel(input.context)
   );
+  const assetTask = buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context));
   const lines = [
     `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
     `*Parent Inspection:* ${parentInspection}`,
+    `*Asset:* ${assetTask}`,
+    `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
-    `*Asset Type:* ${escapeSlackText(input.values.assetType)}`,
     `*Asset Number:* ${escapeSlackText(input.values.assetNumber)}`,
     `*Crew On-Site:* ${escapeSlackText(input.values.crewOnSite)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
-    `*Permit Approved:* ${escapeSlackText(input.values.permitApproved)}`,
     `*Calibration Completed:* ${escapeSlackText(input.values.calibrationCompleted)}`,
     `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`,
-    `*Scanning Area Coverage:* ${String(input.values.scanningAreaCoverage)}`,
-    `*Covered Area Units:* ${escapeSlackText(input.values.coveredAreaUnits)}`,
-    `*Data Upload Status:* ${escapeSlackText(input.values.dataUploadStatus)}`,
-    `*Data Validation Status:* ${escapeSlackText(input.values.dataValidationStatus)}`,
-    `*Report Status:* ${escapeSlackText(input.values.reportStatus)}`,
     `*Crew Off-Site:* ${escapeSlackText(input.values.crewOffSite)}`
   ];
 
@@ -602,18 +610,10 @@ async function createEodThread(
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
-  const assetType = parseEodAssetType(
-    getSelectedOptionValue(values?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
-  );
   const assetNumber = getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction);
   const crewOnSite = getPlainTextValue(values, CALLBACKS.eodCrewOnSiteBlock, CALLBACKS.eodCrewOnSiteAction);
   const jsaSubmitted = parseEodYesNo(
     getSelectedOptionValue(values?.[CALLBACKS.eodJsaSubmittedBlock]?.[CALLBACKS.eodJsaSubmittedAction])
-  );
-  const permitApproved = getPlainTextValue(
-    values,
-    CALLBACKS.eodPermitApprovedBlock,
-    CALLBACKS.eodPermitApprovedAction
   );
   const calibrationCompleted = getPlainTextValue(
     values,
@@ -630,30 +630,11 @@ function validateEodForm(values: ModalState | undefined) {
     CALLBACKS.eodScanningTimeBlock,
     CALLBACKS.eodScanningTimeAction
   );
-  const coverageValue = getPlainTextValue(values, CALLBACKS.eodCoverageBlock, CALLBACKS.eodCoverageAction);
-  const coveredAreaUnits = parseEodCoverageUnit(
-    getSelectedOptionValue(values?.[CALLBACKS.eodCoverageUnitsBlock]?.[CALLBACKS.eodCoverageUnitsAction])
-  );
-  const dataUploadStatus = parseEodStatus(
-    getSelectedOptionValue(values?.[CALLBACKS.eodUploadStatusBlock]?.[CALLBACKS.eodUploadStatusAction])
-  );
-  const dataValidationStatus = parseEodStatus(
-    getSelectedOptionValue(
-      values?.[CALLBACKS.eodValidationStatusBlock]?.[CALLBACKS.eodValidationStatusAction]
-    )
-  );
-  const reportStatus = parseEodStatus(
-    getSelectedOptionValue(values?.[CALLBACKS.eodReportStatusBlock]?.[CALLBACKS.eodReportStatusAction])
-  );
   const crewOffSite = getPlainTextValue(values, CALLBACKS.eodCrewOffSiteBlock, CALLBACKS.eodCrewOffSiteAction);
   const notes = getPlainTextValue(values, CALLBACKS.eodNotesBlock, CALLBACKS.eodNotesAction);
 
   if (!date) {
     errors[CALLBACKS.eodDateBlock] = "Date is required.";
-  }
-
-  if (!assetType) {
-    errors[CALLBACKS.eodAssetTypeBlock] = "Choose an asset type.";
   }
 
   if (!assetNumber) {
@@ -666,10 +647,6 @@ function validateEodForm(values: ModalState | undefined) {
 
   if (!jsaSubmitted) {
     errors[CALLBACKS.eodJsaSubmittedBlock] = "Choose whether JSA was submitted.";
-  }
-
-  if (!permitApproved) {
-    errors[CALLBACKS.eodPermitApprovedBlock] = "Permit Approved is required.";
   }
 
   if (!calibrationCompleted) {
@@ -688,28 +665,6 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodScanningTimeBlock] = "Enter a valid number.";
   }
 
-  if (!coverageValue) {
-    errors[CALLBACKS.eodCoverageBlock] = "Scanning Area Coverage is required.";
-  } else if (Number.isNaN(Number(coverageValue))) {
-    errors[CALLBACKS.eodCoverageBlock] = "Enter a valid number.";
-  }
-
-  if (!coveredAreaUnits) {
-    errors[CALLBACKS.eodCoverageUnitsBlock] = "Choose area units.";
-  }
-
-  if (!dataUploadStatus) {
-    errors[CALLBACKS.eodUploadStatusBlock] = "Choose data upload status.";
-  }
-
-  if (!dataValidationStatus) {
-    errors[CALLBACKS.eodValidationStatusBlock] = "Choose data validation status.";
-  }
-
-  if (!reportStatus) {
-    errors[CALLBACKS.eodReportStatusBlock] = "Choose report status.";
-  }
-
   if (!crewOffSite) {
     errors[CALLBACKS.eodCrewOffSiteBlock] = "Crew Off-Site is required.";
   }
@@ -725,19 +680,12 @@ function validateEodForm(values: ModalState | undefined) {
     success: true as const,
     values: {
       date: date as string,
-      assetType: assetType as EodAssetType,
       assetNumber: assetNumber as string,
       crewOnSite: crewOnSite as string,
       jsaSubmitted: jsaSubmitted as EodYesNo,
-      permitApproved: permitApproved as string,
       calibrationCompleted: calibrationCompleted as string,
       numberOfScansCompleted: Number(scansCompletedValue),
       totalScanningTimeHours: Number(scanningTimeValue),
-      scanningAreaCoverage: Number(coverageValue),
-      coveredAreaUnits: coveredAreaUnits as EodCoverageUnit,
-      dataUploadStatus: dataUploadStatus as EodStatus,
-      dataValidationStatus: dataValidationStatus as EodStatus,
-      reportStatus: reportStatus as EodStatus,
       crewOffSite: crewOffSite as string,
       notes: notes?.trim() || undefined
     } satisfies EodReportFormValues
@@ -1119,6 +1067,41 @@ export function registerSlackHandlers(app: App): void {
     }
   });
 
+  app.options(CALLBACKS.eodTaskAction, async ({ ack, body, logger }) => {
+    try {
+      const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
+      const workflow = getWorkflowByKey(workflowKey);
+      const parentEpicKey = getSelectedOptionValue(
+        body.view?.state.values?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction]
+      );
+      const query = (body.value ?? "").trim();
+
+      if (!parentEpicKey) {
+        await ack({ options: [] });
+        return;
+      }
+
+      const tasks = await searchChildTasks(workflow, parentEpicKey, query);
+
+      await ack({
+        options: tasks.map((task) => ({
+          text: {
+            type: "plain_text",
+            text: `${task.key} - ${task.summary}`.slice(0, 75)
+          },
+          value: task.key
+        }))
+      });
+
+      logger.info(
+        `Returned ${tasks.length} child Task options for parent ${parentEpicKey} in workflow ${workflow.key}`
+      );
+    } catch (error) {
+      logger.error(`Failed to load child Task options for query "${body.value ?? ""}".`, error);
+      await ack({ options: [] });
+    }
+  });
+
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
@@ -1135,11 +1118,24 @@ export function registerSlackHandlers(app: App): void {
       "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
         ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.value
         : undefined;
+    const parentTaskLabel =
+      values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
+      "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
+        ? values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction].selected_option?.text?.text
+        : undefined;
+    const parentTaskKey =
+      values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
+      "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
+        ? values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction].selected_option?.value
+        : undefined;
     const issueTypeValue =
       values[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction] &&
       "selected_option" in values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction]
         ? values[CALLBACKS.issueTypeBlock][CALLBACKS.issueTypeAction].selected_option?.value
         : workflow.allowedIssueTypes[0];
+    const selectedThreadAssetType = parseEodAssetType(
+      getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
+    );
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -1164,6 +1160,16 @@ export function registerSlackHandlers(app: App): void {
         errors: {
           ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
+          ...(isEod && parentTaskKey
+            ? {}
+            : isEod
+              ? { [CALLBACKS.eodTaskBlock]: "Please choose a Task under the parent Epic." }
+              : {}),
+          ...(isEod && selectedThreadAssetType
+            ? {}
+            : isEod
+              ? { [CALLBACKS.eodAssetTypeBlock]: "Please choose an asset type." }
+              : {}),
           ...(isEod || isEhsTask || summary
             ? {}
             : { [CALLBACKS.summaryBlock]: "Summary is required." })
@@ -1234,6 +1240,9 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
+          parentTaskKey: parentTaskKey as string,
+          parentTaskLabel,
+          assetType: selectedThreadAssetType as EodAssetType,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
@@ -1347,8 +1356,8 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
-      const summary = buildEodReportSummary(validation.values);
-      const details = formatEodReportDetails(validation.values);
+      const summary = buildEodReportSummary(context, validation.values);
+      const details = formatEodReportDetails(context, validation.values);
       const issue = await createIssue({
         workflow,
         issueType: "EOD Report",

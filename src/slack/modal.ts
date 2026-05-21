@@ -9,11 +9,9 @@ import {
 import type {
   BlockerType,
   EodAssetType,
-  EodCoverageUnit,
   EhsFormValues,
   JiraDocNode,
   EodReportFormValues,
-  EodStatus,
   EodThreadContext,
   EodYesNo,
   SelectableIssueType,
@@ -23,16 +21,22 @@ import type {
 import { CALLBACKS } from "./constants.js";
 
 const EOD_ASSET_TYPES: EodAssetType[] = [
-  "Building",
-  "Conveyor",
-  "Crusher",
-  "Stockpile",
+  "Kiln",
+  "Hood",
+  "Above Ground Storage Tank",
   "Tank",
-  "Other"
+  "Drum",
+  "Vessel",
+  "Piping",
+  "SDA",
+  "Silo",
+  "Boiler",
+  "Heat Exchangers",
+  "Stacks",
+  "Spheres",
+  "Towers"
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
-const EOD_COVERAGE_UNITS: EodCoverageUnit[] = ["ft^2", "m^2"];
-const EOD_STATUSES: EodStatus[] = ["Not Started", "In Progress", "Complete", "Blocked"];
 
 function workflowOptions(): PlainTextOption[] {
   return listWorkflows().map((workflow) => ({
@@ -121,6 +125,9 @@ function plainTextInputBlock(
 export interface ModalStateValues {
   parentEpicKey?: string;
   parentEpicLabel?: string;
+  eodTaskKey?: string;
+  eodTaskLabel?: string;
+  eodAssetType?: EodAssetType;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -293,6 +300,54 @@ export function buildCreateIssueModal(
 
   if (usesEhsIntake(defaultWorkflow, selectedIssueType)) {
     blocks.push(...buildEhsTaskBlocks(state.ehs));
+  } else if (shouldCollectEodInThread(selectedIssueType)) {
+    blocks.push(
+      {
+        type: "section",
+        block_id: CALLBACKS.eodTaskBlock,
+        text: {
+          type: "mrkdwn",
+          text: "*Asset Task*"
+        },
+        accessory: {
+          type: "external_select",
+          action_id: CALLBACKS.eodTaskAction,
+          min_query_length: 0,
+          initial_option:
+            state.eodTaskKey && state.eodTaskLabel
+              ? {
+                  text: {
+                    type: "plain_text",
+                    text: state.eodTaskLabel.slice(0, 75)
+                  },
+                  value: state.eodTaskKey
+                }
+              : undefined,
+          placeholder: {
+            type: "plain_text",
+            text: "Search child Tasks under the parent Epic"
+          }
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodAssetTypeBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodAssetTypeAction,
+          initial_option: selectedOption(state.eodAssetType),
+          placeholder: {
+            type: "plain_text",
+            text: "Choose asset type"
+          },
+          options: simpleOptions(EOD_ASSET_TYPES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Asset Type"
+        }
+      }
+    );
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
@@ -343,7 +398,15 @@ export function encodeEodThreadContext(context: EodThreadContext): string {
 export function decodeEodThreadContext(value: string): EodThreadContext {
   const parsed = JSON.parse(value) as Partial<EodThreadContext>;
 
-  if (!parsed.workflowKey || !parsed.parentEpicKey || !parsed.requesterId || !parsed.channelId || !parsed.threadTs) {
+  if (
+    !parsed.workflowKey ||
+    !parsed.parentEpicKey ||
+    !parsed.parentTaskKey ||
+    !parsed.assetType ||
+    !parsed.requesterId ||
+    !parsed.channelId ||
+    !parsed.threadTs
+  ) {
     throw new Error("EOD thread context is incomplete.");
   }
 
@@ -351,6 +414,9 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     workflowKey: parsed.workflowKey,
     parentEpicKey: parsed.parentEpicKey,
     parentEpicLabel: parsed.parentEpicLabel,
+    parentTaskKey: parsed.parentTaskKey,
+    parentTaskLabel: parsed.parentTaskLabel,
+    assetType: parsed.assetType,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs
@@ -359,6 +425,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
 
 export function buildEodReportModal(context: EodThreadContext) {
   const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
+  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskKey;
 
   return {
     type: "modal" as const,
@@ -381,7 +448,10 @@ export function buildEodReportModal(context: EodThreadContext) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Parent Inspection:* ${parentInspectionLabel}`
+          text:
+            `*Parent Inspection:* ${parentInspectionLabel}\n` +
+            `*Asset:* ${parentTaskLabel}\n` +
+            `*Asset Type:* ${context.assetType}`
         }
       },
       {
@@ -394,23 +464,6 @@ export function buildEodReportModal(context: EodThreadContext) {
         label: {
           type: "plain_text",
           text: "Date"
-        }
-      },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodAssetTypeBlock,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.eodAssetTypeAction,
-          placeholder: {
-            type: "plain_text",
-            text: "Choose asset type"
-          },
-          options: simpleOptions(EOD_ASSET_TYPES)
-        },
-        label: {
-          type: "plain_text",
-          text: "Asset Type"
         }
       },
       plainTextInputBlock(
@@ -442,12 +495,6 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "JSA Submitted"
         }
       },
-      plainTextInputBlock(
-        CALLBACKS.eodPermitApprovedBlock,
-        CALLBACKS.eodPermitApprovedAction,
-        "Permit Approved",
-        "Permit approval detail"
-      ),
       plainTextInputBlock(
         CALLBACKS.eodCalibrationCompletedBlock,
         CALLBACKS.eodCalibrationCompletedAction,
@@ -488,91 +535,6 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "Total Scanning Time (Hours)"
         }
       },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodCoverageBlock,
-        element: {
-          type: "number_input",
-          action_id: CALLBACKS.eodCoverageAction,
-          is_decimal_allowed: true,
-          placeholder: {
-            type: "plain_text",
-            text: "0"
-          }
-        },
-        label: {
-          type: "plain_text",
-          text: "Scanning Area Coverage"
-        }
-      },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodCoverageUnitsBlock,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.eodCoverageUnitsAction,
-          placeholder: {
-            type: "plain_text",
-            text: "Choose units"
-          },
-          options: simpleOptions(EOD_COVERAGE_UNITS)
-        },
-        label: {
-          type: "plain_text",
-          text: "Covered Area Units"
-        }
-      },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodUploadStatusBlock,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.eodUploadStatusAction,
-          placeholder: {
-            type: "plain_text",
-            text: "Choose status"
-          },
-          options: simpleOptions(EOD_STATUSES)
-        },
-        label: {
-          type: "plain_text",
-          text: "Data Upload Status"
-        }
-      },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodValidationStatusBlock,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.eodValidationStatusAction,
-          placeholder: {
-            type: "plain_text",
-            text: "Choose status"
-          },
-          options: simpleOptions(EOD_STATUSES)
-        },
-        label: {
-          type: "plain_text",
-          text: "Data Validation Status"
-        }
-      },
-      {
-        type: "input",
-        block_id: CALLBACKS.eodReportStatusBlock,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.eodReportStatusAction,
-          placeholder: {
-            type: "plain_text",
-            text: "Choose status"
-          },
-          options: simpleOptions(EOD_STATUSES)
-        },
-        label: {
-          type: "plain_text",
-          text: "Report Status"
-        }
-      },
       plainTextInputBlock(
         CALLBACKS.eodCrewOffSiteBlock,
         CALLBACKS.eodCrewOffSiteAction,
@@ -592,22 +554,18 @@ export function buildEodReportModal(context: EodThreadContext) {
   };
 }
 
-export function formatEodReportDetails(values: EodReportFormValues): string {
+export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const lines = [
+    `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
+    `Asset: ${context.parentTaskLabel ?? context.parentTaskKey}`,
+    `Asset Type: ${context.assetType}`,
     `Date: ${values.date}`,
-    `Asset Type: ${values.assetType}`,
     `Asset Number: ${values.assetNumber}`,
     `Crew On-Site: ${values.crewOnSite}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
-    `Permit Approved: ${values.permitApproved}`,
     `Calibration Completed: ${values.calibrationCompleted}`,
     `Number of Scans Completed: ${values.numberOfScansCompleted}`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`,
-    `Scanning Area Coverage: ${values.scanningAreaCoverage}`,
-    `Covered Area Units: ${values.coveredAreaUnits}`,
-    `Data Upload Status: ${values.dataUploadStatus}`,
-    `Data Validation Status: ${values.dataValidationStatus}`,
-    `Report Status: ${values.reportStatus}`,
     `Crew Off-Site: ${values.crewOffSite}`
   ];
 
@@ -618,8 +576,8 @@ export function formatEodReportDetails(values: EodReportFormValues): string {
   return lines.join("\n");
 }
 
-export function buildEodReportSummary(values: EodReportFormValues): string {
-  return `${values.date} ${values.assetType} ${values.assetNumber} EOD Report`;
+export function buildEodReportSummary(context: EodThreadContext, values: EodReportFormValues): string {
+  return `${values.date} ${context.assetType} ${values.assetNumber} EOD Report`;
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {

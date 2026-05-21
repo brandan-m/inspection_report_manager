@@ -5,6 +5,8 @@ export const CALLBACKS = {
   createIssueView: "create_gecko_report_view",
   eodStartButton: "start_eod_report_collection",
   eodReportView: "eod_report_view",
+  eodTaskBlock: "eod_task_block",
+  eodTaskAction: "eod_task_select",
   workflowBlock: "workflow_block",
   workflowAction: "workflow_select",
   epicBlock: "epic_block",
