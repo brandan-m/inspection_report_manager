@@ -128,6 +128,7 @@ export interface ModalStateValues {
   eodTaskKey?: string;
   eodTaskLabel?: string;
   eodAssetType?: EodAssetType;
+  eodAssetNumber?: string;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -346,7 +347,14 @@ export function buildCreateIssueModal(
           type: "plain_text",
           text: "Asset Type"
         }
-      }
+      },
+      plainTextInputBlock(
+        CALLBACKS.eodAssetNumberBlock,
+        CALLBACKS.eodAssetNumberAction,
+        "Asset Number",
+        "Asset number",
+        state.eodAssetNumber
+      )
     );
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
@@ -402,6 +410,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     !parsed.workflowKey ||
     !parsed.parentEpicKey ||
     !parsed.assetType ||
+    !parsed.assetNumber ||
     !parsed.requesterId ||
     !parsed.channelId ||
     !parsed.threadTs
@@ -416,6 +425,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     parentTaskKey: parsed.parentTaskKey,
     parentTaskLabel: parsed.parentTaskLabel,
     assetType: parsed.assetType,
+    assetNumber: parsed.assetNumber,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs
@@ -450,7 +460,8 @@ export function buildEodReportModal(context: EodThreadContext) {
           text:
             `*Parent Inspection:* ${parentInspectionLabel}\n` +
             `*Asset:* ${parentTaskLabel}\n` +
-            `*Asset Type:* ${context.assetType}`
+            `*Asset Type:* ${context.assetType}\n` +
+            `*Asset Number:* ${context.assetNumber}`
         }
       },
       {
@@ -466,16 +477,12 @@ export function buildEodReportModal(context: EodThreadContext) {
         }
       },
       plainTextInputBlock(
-        CALLBACKS.eodAssetNumberBlock,
-        CALLBACKS.eodAssetNumberAction,
-        "Asset number",
-        "Asset number"
-      ),
-      plainTextInputBlock(
-        CALLBACKS.eodCrewOnSiteBlock,
-        CALLBACKS.eodCrewOnSiteAction,
-        "Crew On-Site",
-        "Crew arrival time or detail"
+        CALLBACKS.eodFullDayOverviewBlock,
+        CALLBACKS.eodFullDayOverviewAction,
+        "Full Day Overview",
+        "Add timing, crew movement, and operational notes for the day",
+        undefined,
+        true
       ),
       {
         type: "input",
@@ -494,12 +501,6 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "JSA Submitted"
         }
       },
-      plainTextInputBlock(
-        CALLBACKS.eodCalibrationCompletedBlock,
-        CALLBACKS.eodCalibrationCompletedAction,
-        "Calibration Completed",
-        "Calibration completion detail"
-      ),
       {
         type: "input",
         block_id: CALLBACKS.eodScansCompletedBlock,
@@ -535,12 +536,6 @@ export function buildEodReportModal(context: EodThreadContext) {
         }
       },
       plainTextInputBlock(
-        CALLBACKS.eodCrewOffSiteBlock,
-        CALLBACKS.eodCrewOffSiteAction,
-        "Crew Off-Site",
-        "Crew departure time or detail"
-      ),
-      plainTextInputBlock(
         CALLBACKS.eodNotesBlock,
         CALLBACKS.eodNotesAction,
         "Notes (optional)",
@@ -558,14 +553,12 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
     `Asset: ${context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected"}`,
     `Asset Type: ${context.assetType}`,
+    `Asset Number: ${context.assetNumber}`,
     `Date: ${values.date}`,
-    `Asset Number: ${values.assetNumber}`,
-    `Crew On-Site: ${values.crewOnSite}`,
+    `Full Day Overview: ${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
-    `Calibration Completed: ${values.calibrationCompleted}`,
     `Number of Scans Completed: ${values.numberOfScansCompleted}`,
-    `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`,
-    `Crew Off-Site: ${values.crewOffSite}`
+    `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   ];
 
   if (values.notes?.trim()) {
@@ -576,7 +569,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
 }
 
 export function buildEodReportSummary(context: EodThreadContext, values: EodReportFormValues): string {
-  return `${values.date} ${context.assetType} ${values.assetNumber} EOD Report`;
+  return `${values.date} ${context.assetType} ${context.assetNumber} EOD Report`;
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {
