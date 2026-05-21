@@ -401,7 +401,6 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
   if (
     !parsed.workflowKey ||
     !parsed.parentEpicKey ||
-    !parsed.parentTaskKey ||
     !parsed.assetType ||
     !parsed.requesterId ||
     !parsed.channelId ||
@@ -425,7 +424,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
 
 export function buildEodReportModal(context: EodThreadContext) {
   const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
-  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskKey;
+  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected";
 
   return {
     type: "modal" as const,
@@ -557,7 +556,7 @@ export function buildEodReportModal(context: EodThreadContext) {
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const lines = [
     `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
-    `Asset: ${context.parentTaskLabel ?? context.parentTaskKey}`,
+    `Asset: ${context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected"}`,
     `Asset Type: ${context.assetType}`,
     `Date: ${values.date}`,
     `Asset Number: ${values.assetNumber}`,

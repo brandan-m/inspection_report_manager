@@ -278,7 +278,11 @@ function buildJiraIssueUrl(issueKey: string): string {
   return new URL(`/browse/${issueKey}`, env.JIRA_BASE_URL).toString();
 }
 
-function buildLinkedJiraLabel(issueKey: string, label?: string): string {
+function buildLinkedJiraLabel(issueKey?: string, label?: string): string {
+  if (!issueKey) {
+    return escapeSlackText(label?.trim() || "Not set");
+  }
+
   const linkText = label?.trim() || issueKey;
   return `<${buildJiraIssueUrl(issueKey)}|${escapeSlackText(linkText)}>`;
 }
@@ -297,7 +301,7 @@ function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey
 }
 
 function getParentTaskLabel(context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel">): string {
-  return context.parentTaskLabel?.trim() || context.parentTaskKey;
+  return context.parentTaskLabel?.trim() || context.parentTaskKey || "Not selected";
 }
 
 function buildEodThreadStartMessage(context: EodThreadContext) {
@@ -308,6 +312,7 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
     `*Parent Inspection:* ${parentInspection}\n` +
     `*Asset:* ${assetTask}\n` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
+    `${context.parentTaskKey ? "" : "*Warning:* No asset task was selected for this thread.\n"}` +
     `*Created by:* <@${context.requesterId}>`;
 
   return {
@@ -1160,16 +1165,6 @@ export function registerSlackHandlers(app: App): void {
         errors: {
           ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
-          ...(isEod && parentTaskKey
-            ? {}
-            : isEod
-              ? { [CALLBACKS.eodTaskBlock]: "Please choose a Task under the parent Epic." }
-              : {}),
-          ...(isEod && selectedThreadAssetType
-            ? {}
-            : isEod
-              ? { [CALLBACKS.eodAssetTypeBlock]: "Please choose an asset type." }
-              : {}),
           ...(isEod || isEhsTask || summary
             ? {}
             : { [CALLBACKS.summaryBlock]: "Summary is required." })
@@ -1193,6 +1188,18 @@ export function registerSlackHandlers(app: App): void {
         response_action: "errors",
         errors: {
           [CALLBACKS.detailsBlock]: "Details are required."
+        }
+      });
+      return;
+    }
+
+    if (isEod && !selectedThreadAssetType) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          ...(selectedThreadAssetType
+            ? {}
+            : { [CALLBACKS.eodAssetTypeBlock]: "Please choose an asset type." })
         }
       });
       return;
@@ -1240,17 +1247,21 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
-          parentTaskKey: parentTaskKey as string,
+          parentTaskKey,
           parentTaskLabel,
           assetType: selectedThreadAssetType as EodAssetType,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
 
+        const taskWarning = parentTaskKey
+          ? ""
+          : " No asset task was selected, so you may want to update the thread manually before generating reports.";
+
         await trySendDirectMessage(
           client,
           body.user.id,
-          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.`,
+          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.${taskWarning}`,
           undefined,
           logger
         );
