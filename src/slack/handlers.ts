@@ -117,6 +117,20 @@ function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): str
   return parseModalMetadata(view)?.channelId;
 }
 
+function getChannelIdFromActionBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+
+  const payload = body as {
+    channel?: { id?: string };
+    channel_id?: string;
+    container?: { channel_id?: string };
+  };
+
+  return payload.channel?.id ?? payload.channel_id ?? payload.container?.channel_id;
+}
+
 function getSelectedWorkflowKeyFromState(stateValues?: ViewSubmitAction["view"]["state"]["values"]): string {
   return (
     getSelectedOptionValue(stateValues?.[CALLBACKS.workflowBlock]?.[CALLBACKS.workflowAction]) ??
@@ -504,15 +518,13 @@ function buildChannelEntryMessage() {
 }
 
 function getEodChannelId(channelId?: string): string {
-  const resolvedChannelId = channelId ?? env.SLACK_EOD_CHANNEL_ID ?? env.SLACK_TEST_CHANNEL_ID;
-
-  if (!resolvedChannelId) {
+  if (!channelId) {
     throw new Error(
-      "A source channel, SLACK_EOD_CHANNEL_ID, or SLACK_TEST_CHANNEL_ID must be configured for EOD intake threads."
+      "Could not determine the originating Slack channel for this EOD intake. Please launch the workflow from the target channel and try again."
     );
   }
 
-  return resolvedChannelId;
+  return channelId;
 }
 
 async function openCreateIssueModal(
@@ -811,7 +823,13 @@ export function registerSlackHandlers(app: App): void {
 
   app.shortcut(CALLBACKS.globalShortcut, async ({ ack, body, client, logger }) => {
     await ack();
-    await openCreateIssueModal(client, body.trigger_id, logger, `Opened modal for user ${body.user.id}`);
+    await openCreateIssueModal(
+      client,
+      body.trigger_id,
+      logger,
+      `Opened modal for user ${body.user.id}`,
+      getChannelIdFromActionBody(body)
+    );
   });
 
   app.action(CALLBACKS.homeOpenButton, async ({ ack, body, client, logger }) => {
@@ -865,7 +883,7 @@ export function registerSlackHandlers(app: App): void {
       body.trigger_id,
       logger,
       `Opened modal from channel message for user ${body.user.id}`,
-      "channel" in body ? body.channel?.id : undefined
+      getChannelIdFromActionBody(body)
     );
   });
 

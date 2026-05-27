@@ -168,7 +168,8 @@ For a local smoke test:
    - RB Bug flows show the extra required fields
    - EOD flows do not show RB-only Bug fields
    - EHS Task flows show the structured intake instead of the generic details box
-   - EOD flows create a thread in `SLACK_EOD_CHANNEL_ID` or fall back to `SLACK_TEST_CHANNEL_ID`
+  - EOD flows create a thread in the same Slack channel where the workflow was launched
+  - If the source channel cannot be determined, the workflow stops with a clear error instead of posting into a fallback channel
    - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
 
 ## Deployment Notes
