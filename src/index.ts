@@ -35,7 +35,9 @@ async function main() {
     await app.start(env.PORT);
   }
 
-  console.log(`gecko_reporting_workflow is running on port ${env.PORT}`);
+  console.log(
+    `gecko_reporting_workflow is running on port ${env.PORT} (socketMode=${String(env.SLACK_USE_SOCKET_MODE)})`
+  );
 }
 
 main().catch((error) => {

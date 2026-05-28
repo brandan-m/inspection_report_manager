@@ -644,6 +644,36 @@ async function createEodThread(
   return threadContext;
 }
 
+function summarizeCreateIssueSubmission(input: {
+  workflowKey: string;
+  jiraProjectKey: string;
+  userId: string;
+  channelId?: string;
+  issueTypeValue?: string;
+  parentEpicKey?: string;
+  summary?: string | null;
+  details?: string | null;
+  blockerTypeValue?: string;
+  downtimeValue: string;
+  isEod: boolean;
+  isEhsTask: boolean;
+}) {
+  return JSON.stringify({
+    workflowKey: input.workflowKey,
+    jiraProjectKey: input.jiraProjectKey,
+    userId: input.userId,
+    channelId: input.channelId ?? null,
+    issueType: input.issueTypeValue ?? null,
+    parentEpicKey: input.parentEpicKey ?? null,
+    summaryLength: (input.summary ?? "").trim().length,
+    detailsLength: (input.details ?? "").trim().length,
+    blockerType: input.blockerTypeValue ?? null,
+    downtimeValue: input.downtimeValue || null,
+    isEod: input.isEod,
+    isEhsTask: input.isEhsTask
+  });
+}
+
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
@@ -1233,8 +1263,33 @@ export function registerSlackHandlers(app: App): void {
     const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
     const isEod = selectedIssueType === "EOD Report";
     const isEhsTask = selectedIssueType ? usesEhsSpecificFields(workflow, selectedIssueType) : false;
+    const submissionSummary = summarizeCreateIssueSubmission({
+      workflowKey: workflow.key,
+      jiraProjectKey: workflow.jiraProjectKey,
+      userId: body.user.id,
+      channelId,
+      issueTypeValue,
+      parentEpicKey,
+      summary,
+      details,
+      blockerTypeValue,
+      downtimeValue,
+      isEod,
+      isEhsTask
+    });
+
+    logger.info(`Received create issue submission ${submissionSummary}`);
 
     if (!parentEpicKey || !issueTypeValue || (!isEod && !isEhsTask && !summary)) {
+      logger.info(
+        `Rejecting create issue submission for missing required top-level fields ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          parentEpicKeyMissing: !parentEpicKey,
+          issueTypeMissing: !issueTypeValue,
+          summaryMissing: !isEod && !isEhsTask && !summary
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1249,6 +1304,13 @@ export function registerSlackHandlers(app: App): void {
     }
 
     if (!selectedIssueType) {
+      logger.info(
+        `Rejecting create issue submission because issue type could not be parsed ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueTypeValue: issueTypeValue ?? null
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1259,6 +1321,13 @@ export function registerSlackHandlers(app: App): void {
     }
 
     if (!isEod && !isEhsTask && !details) {
+      logger.info(
+        `Rejecting create issue submission for missing details ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueType: selectedIssueType
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1306,6 +1375,14 @@ export function registerSlackHandlers(app: App): void {
       }
 
       if (Object.keys(errors).length > 0) {
+        logger.info(
+          `Rejecting bug submission for missing workflow-specific fields ${JSON.stringify({
+            workflowKey: workflow.key,
+            userId: body.user.id,
+            issueType: selectedIssueType,
+            errors
+          })}`
+        );
         await ack({
           response_action: "errors",
           errors
@@ -1317,6 +1394,13 @@ export function registerSlackHandlers(app: App): void {
     const ehsValidation = isEhsTask ? validateEhsForm(values) : undefined;
 
     if (ehsValidation && !ehsValidation.success) {
+      logger.info(
+        `Rejecting EHS submission for validation errors ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          errors: ehsValidation.errors
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: ehsValidation.errors
@@ -1325,9 +1409,26 @@ export function registerSlackHandlers(app: App): void {
     }
 
     await ack();
+    logger.info(
+      `Accepted create issue submission and beginning processing ${JSON.stringify({
+        workflowKey: workflow.key,
+        userId: body.user.id,
+        issueType: selectedIssueType,
+        parentEpicKey,
+        channelId: channelId ?? null
+      })}`
+    );
 
     try {
       if (isEod) {
+        logger.info(
+          `Creating EOD intake thread ${JSON.stringify({
+            workflowKey: workflow.key,
+            userId: body.user.id,
+            parentEpicKey,
+            channelId: getEodChannelId(channelId)
+          })}`
+        );
         const threadContext = await createEodThread(client, {
           workflowKey: workflow.key,
           parentEpicKey,
@@ -1365,6 +1466,21 @@ export function registerSlackHandlers(app: App): void {
         issueDetails = formatEhsDetails(ehsValidation.values);
         descriptionContent = buildEhsDescriptionContent(ehsValidation.values);
       }
+
+      logger.info(
+        `Creating Jira issue ${JSON.stringify({
+          workflowKey: workflow.key,
+          jiraProjectKey: workflow.jiraProjectKey,
+          userId: body.user.id,
+          issueType: selectedIssueType,
+          parentEpicKey,
+          summaryLength: issueSummary.trim().length,
+          detailsLength: issueDetails.trim().length,
+          blockerType: blockerTypeValue ?? null,
+          opsDowntimeHours: downtimeValue ? Number(downtimeValue) : null,
+          hasDescriptionContent: Boolean(descriptionContent)
+        })}`
+      );
 
       const issue = await createIssue({
         workflow,
@@ -1442,6 +1558,14 @@ export function registerSlackHandlers(app: App): void {
     const validation = validateEodForm(view.state.values);
 
     if (!validation.success) {
+      logger.info(
+        `Rejecting EOD report submission for validation errors ${JSON.stringify({
+          workflowKey: context.workflowKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          errors: validation.errors
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: validation.errors
@@ -1450,11 +1574,31 @@ export function registerSlackHandlers(app: App): void {
     }
 
     await ack();
+    logger.info(
+      `Accepted EOD report submission ${JSON.stringify({
+        workflowKey: context.workflowKey,
+        userId: body.user.id,
+        threadTs: context.threadTs,
+        channelId: context.channelId,
+        parentEpicKey: context.parentEpicKey
+      })}`
+    );
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
       const summary = buildEodReportSummary(context, validation.values);
       const details = formatEodReportDetails(context, validation.values);
+      logger.info(
+        `Creating EOD Jira issue ${JSON.stringify({
+          workflowKey: workflow.key,
+          jiraProjectKey: workflow.jiraProjectKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          parentEpicKey: context.parentEpicKey,
+          summaryLength: summary.trim().length,
+          detailsLength: details.trim().length
+        })}`
+      );
       const issue = await createIssue({
         workflow,
         issueType: "EOD Report",
