@@ -81,6 +81,20 @@ function getSelectedOptionsValues(
   return [];
 }
 
+function getSelectedConversationValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string | undefined {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "selected_conversation" in action) {
+    return action.selected_conversation ?? undefined;
+  }
+
+  return undefined;
+}
+
 function getDateValue(
   stateValues: ModalState | undefined,
   blockId: string,
@@ -115,6 +129,10 @@ function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): s
 
 function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
   return parseModalMetadata(view)?.channelId;
+}
+
+function getRequireChannelSelectionFromViewMetadata(view?: { private_metadata?: string }): boolean {
+  return parseModalMetadata(view)?.requireChannelSelection ?? false;
 }
 
 function getChannelIdFromActionBody(body: unknown): string | undefined {
@@ -223,6 +241,7 @@ function getModalStateValues(stateValues?: ModalState) {
   );
 
   return {
+    channelId: getSelectedConversationValue(stateValues, CALLBACKS.channelBlock, CALLBACKS.channelAction),
     selectedIssueType: getSelectedIssueTypeFromState(stateValues),
     parentEpicKey:
       parentEpicSelection && "selected_option" in parentEpicSelection
@@ -540,7 +559,8 @@ async function openCreateIssueModal(
     trigger_id: triggerId,
     view: buildCreateIssueModal(defaultWorkflow, {}, {
       workflowKey: defaultWorkflow.key,
-      channelId
+      channelId,
+      requireChannelSelection: !channelId
     })
   });
 
@@ -956,7 +976,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1004,7 +1025,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1057,7 +1079,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: nextState.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1101,7 +1124,8 @@ export function registerSlackHandlers(app: App): void {
               },
               {
                 workflowKey: workflow.key,
-                channelId: getChannelIdFromViewMetadata(body.view)
+                channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+                requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
               }
             )
           },
@@ -1210,10 +1234,68 @@ export function registerSlackHandlers(app: App): void {
     }
   });
 
+  app.action(CALLBACKS.eodTaskAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD task selection action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+    const state = getModalStateValues(body.view.state.values);
+    const selectedTaskKey = getSelectedOptionValue(body.actions[0]);
+    const selectedTaskLabel =
+      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+      ? state.selectedIssueType
+      : workflow.allowedIssueTypes[0];
+
+    logger.info(
+      `Attempting modal EOD task update for workflow ${workflow.key} to task=${selectedTaskKey ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              eodTaskKey: selectedTaskKey,
+              eodTaskLabel: selectedTaskLabel,
+              selectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal EOD task update for workflow ${workflow.key}`
+      );
+    } catch {
+      return;
+    }
+
+    logger.info(`Updated modal EOD task for workflow ${workflow.key} to ${selectedTaskKey ?? "n/a"}`);
+  });
+
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
-    const channelId = getChannelIdFromViewMetadata(view);
+    const stateChannelId = getSelectedConversationValue(
+      view.state.values,
+      CALLBACKS.channelBlock,
+      CALLBACKS.channelAction
+    );
+    const channelId = stateChannelId ?? getChannelIdFromViewMetadata(view);
     const values = view.state.values;
     const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
@@ -1337,6 +1419,16 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    if (!channelId) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.channelBlock]: "Choose the Slack channel where this workflow should post updates."
+        }
+      });
+      return;
+    }
+
     if (isEod && !selectedThreadAssetType) {
       await ack({
         response_action: "errors",
@@ -1354,6 +1446,17 @@ export function registerSlackHandlers(app: App): void {
         response_action: "errors",
         errors: {
           [CALLBACKS.eodAssetNumberBlock]: "Please enter an asset number."
+        }
+      });
+      return;
+    }
+
+    if (isEod && !channelId) {
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.issueTypeBlock]:
+            "EOD Report must be launched from a Slack channel so the intake thread can be created there."
         }
       });
       return;
@@ -1514,6 +1617,10 @@ export function registerSlackHandlers(app: App): void {
         } catch (error) {
           logger.warn("Could not post Jira issue confirmation to the originating Slack channel.", error);
         }
+      } else {
+        logger.info(
+          `Skipping channel confirmation for Jira issue ${issue.key} because no originating channel was captured.`
+        );
       }
 
       await trySendDirectMessage(
