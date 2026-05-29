@@ -559,8 +559,7 @@ async function openCreateIssueModal(
     trigger_id: triggerId,
     view: buildCreateIssueModal(defaultWorkflow, {}, {
       workflowKey: defaultWorkflow.key,
-      channelId,
-      requireChannelSelection: !channelId
+      channelId
     })
   });
 
@@ -1419,16 +1418,6 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (!channelId) {
-      await ack({
-        response_action: "errors",
-        errors: {
-          [CALLBACKS.channelBlock]: "Choose the Slack channel where this workflow should post updates."
-        }
-      });
-      return;
-    }
-
     if (isEod && !selectedThreadAssetType) {
       await ack({
         response_action: "errors",
@@ -1446,17 +1435,6 @@ export function registerSlackHandlers(app: App): void {
         response_action: "errors",
         errors: {
           [CALLBACKS.eodAssetNumberBlock]: "Please enter an asset number."
-        }
-      });
-      return;
-    }
-
-    if (isEod && !channelId) {
-      await ack({
-        response_action: "errors",
-        errors: {
-          [CALLBACKS.issueTypeBlock]:
-            "EOD Report must be launched from a Slack channel so the intake thread can be created there."
         }
       });
       return;
@@ -1507,6 +1485,32 @@ export function registerSlackHandlers(app: App): void {
       await ack({
         response_action: "errors",
         errors: ehsValidation.errors
+      });
+      return;
+    }
+
+    if (!channelId) {
+      logger.info(
+        `Prompting for fallback channel selection before completing submission ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueType: selectedIssueType,
+          parentEpicKey
+        })}`
+      );
+      await ack({
+        response_action: "update",
+        view: buildCreateIssueModal(
+          workflow,
+          {
+            ...getModalStateValues(values),
+            selectedIssueType
+          },
+          {
+            workflowKey: workflow.key,
+            requireChannelSelection: true
+          }
+        )
       });
       return;
     }

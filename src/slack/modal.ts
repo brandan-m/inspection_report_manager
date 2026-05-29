@@ -37,7 +37,7 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
   "Towers"
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
-const CHANNEL_CONVERSATION_TYPES: Array<"public" | "private"> = ["public", "private"];
+const CHANNEL_CONVERSATION_TYPES: Array<"public"> = ["public"];
 
 function workflowOptions(): PlainTextOption[] {
   return listWorkflows().map((workflow) => ({
@@ -204,6 +204,14 @@ export function buildCreateIssueModal(
     },
     ...(metadata.requireChannelSelection
       ? [
+          {
+            type: "section" as const,
+            text: {
+              type: "mrkdwn" as const,
+              text:
+                "*Choose Channel*\nWe couldn't determine where to post this workflow's Slack follow-up. Pick a public channel to continue."
+            }
+          },
           {
             type: "input" as const,
             block_id: CALLBACKS.channelBlock,
