@@ -17,13 +17,21 @@ interface LinkIssuesInput {
   relationshipText: string;
 }
 
+function normalizeRelationshipText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 async function getIssueLinkTypes(): Promise<JiraIssueLinkType[]> {
   const response = await jiraRequest<JiraIssueLinkTypesResponse>("/rest/api/3/issueLinkType");
   return response.issueLinkTypes ?? [];
 }
 
 function buildLinkPayload(input: LinkIssuesInput, issueLinkType: JiraIssueLinkType) {
-  if (issueLinkType.outward === input.relationshipText) {
+  const relationshipText = normalizeRelationshipText(input.relationshipText);
+  const outward = normalizeRelationshipText(issueLinkType.outward);
+  const inward = normalizeRelationshipText(issueLinkType.inward);
+
+  if (outward === relationshipText) {
     return {
       outwardIssue: {
         key: input.issueKey
@@ -37,7 +45,7 @@ function buildLinkPayload(input: LinkIssuesInput, issueLinkType: JiraIssueLinkTy
     };
   }
 
-  if (issueLinkType.inward === input.relationshipText) {
+  if (inward === relationshipText) {
     return {
       outwardIssue: {
         key: input.relatedIssueKey
@@ -55,8 +63,11 @@ function buildLinkPayload(input: LinkIssuesInput, issueLinkType: JiraIssueLinkTy
 }
 
 export async function linkIssuesByRelationship(input: LinkIssuesInput): Promise<void> {
+  const relationshipText = normalizeRelationshipText(input.relationshipText);
   const issueLinkType = (await getIssueLinkTypes()).find(
-    (linkType) => linkType.outward === input.relationshipText || linkType.inward === input.relationshipText
+    (linkType) =>
+      normalizeRelationshipText(linkType.outward) === relationshipText ||
+      normalizeRelationshipText(linkType.inward) === relationshipText
   );
 
   if (!issueLinkType) {
