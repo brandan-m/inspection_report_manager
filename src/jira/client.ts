@@ -5,7 +5,7 @@ function buildAuthHeader(): string {
   return `Basic ${credentials}`;
 }
 
-export async function jiraRequest<T>(path: string, init?: RequestInit): Promise<T> {
+async function jiraFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${env.JIRA_BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -21,5 +21,20 @@ export async function jiraRequest<T>(path: string, init?: RequestInit): Promise<
     throw new Error(`Jira request failed (${response.status}): ${body}`);
   }
 
-  return (await response.json()) as T;
+  return response;
+}
+
+export async function jiraRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await jiraFetch(path, init);
+  const body = await response.text();
+
+  if (!body) {
+    return undefined as T;
+  }
+
+  return JSON.parse(body) as T;
+}
+
+export async function jiraRequestWithoutResponse(path: string, init?: RequestInit): Promise<void> {
+  await jiraFetch(path, init);
 }

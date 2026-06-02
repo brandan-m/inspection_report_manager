@@ -12,6 +12,7 @@ import {
   type EhsModalStateValues
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
+import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import { buildEpicSearchJql, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import type {
   BlockerType,
@@ -1755,6 +1756,24 @@ export function registerSlackHandlers(app: App): void {
         descriptionContent: buildEodDescriptionContent(context, validation.values),
         requesterName: body.user.id
       });
+
+      if (context.parentTaskKey) {
+        try {
+          await linkIssuesByRelationship({
+            issueKey: issue.key,
+            relatedIssueKey: context.parentTaskKey,
+            relationshipText: "Connects to"
+          });
+          logger.info(`Linked EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey} as "Connects to".`);
+        } catch (error) {
+          logger.warn(
+            `Could not link EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+
       const completionMessage = buildEodCompletionMessage({
         issueKey: issue.key,
         issueSummary: summary,
