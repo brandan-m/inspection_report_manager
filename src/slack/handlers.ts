@@ -23,6 +23,7 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  buildEodDescriptionContent,
   buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
@@ -36,6 +37,7 @@ import {
   shouldCollectEodInThread,
   usesEhsSpecificFields
 } from "./modal.js";
+import { type SlackRichTextBlock, richTextToJiraDocNodes, richTextToPlainText } from "./richText.js";
 
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
@@ -62,6 +64,24 @@ function getPlainTextValue(
 
   if (action && "value" in action) {
     return action.value ?? undefined;
+  }
+
+  return undefined;
+}
+
+function getRichTextValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): SlackRichTextBlock | undefined {
+  const action = stateValues?.[blockId]?.[actionId] as
+    | {
+        rich_text_value?: SlackRichTextBlock;
+      }
+    | undefined;
+
+  if (action?.rich_text_value?.type === "rich_text") {
+    return action.rich_text_value;
   }
 
   return undefined;
@@ -412,7 +432,7 @@ function buildEodCompletionMessage(input: {
     getParentInspectionLabel(input.context)
   );
   const assetTask = buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context));
-  const lines = [
+  const headerLines = [
     `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
     `*Parent Inspection:* ${parentInspection}`,
@@ -421,15 +441,10 @@ function buildEodCompletionMessage(input: {
     `*Asset Number:* ${escapeSlackText(input.context.assetNumber)}`,
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
-    `*Full Day Overview:* ${escapeSlackText(input.values.fullDayOverview)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
     `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
-
-  if (input.values.notes?.trim()) {
-    lines.push(`*Notes:* ${escapeSlackText(input.values.notes.trim())}`);
-  }
 
   return {
     text: `EOD Report generated: ${input.issueKey} for ${input.context.parentEpicKey}.`,
@@ -438,9 +453,27 @@ function buildEodCompletionMessage(input: {
         type: "section" as const,
         text: {
           type: "mrkdwn" as const,
-          text: lines.join("\n")
+          text: headerLines.join("\n")
         }
-      }
+      },
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: `*Full Day Overview:*\n${escapeSlackText(input.values.fullDayOverview)}`
+        }
+      },
+      ...(input.values.notes?.trim()
+        ? [
+            {
+              type: "section" as const,
+              text: {
+                type: "mrkdwn" as const,
+                text: `*Notes:*\n${escapeSlackText(input.values.notes.trim())}`
+              }
+            }
+          ]
+        : [])
     ]
   };
 }
@@ -696,11 +729,13 @@ function summarizeCreateIssueSubmission(input: {
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
-  const fullDayOverview = getPlainTextValue(
+  const fullDayOverviewValue = getRichTextValue(
     values,
     CALLBACKS.eodFullDayOverviewBlock,
     CALLBACKS.eodFullDayOverviewAction
   );
+  const fullDayOverview = richTextToPlainText(fullDayOverviewValue);
+  const fullDayOverviewContent = richTextToJiraDocNodes(fullDayOverviewValue);
   const jsaSubmitted = parseEodYesNo(
     getSelectedOptionValue(values?.[CALLBACKS.eodJsaSubmittedBlock]?.[CALLBACKS.eodJsaSubmittedAction])
   );
@@ -720,7 +755,7 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodDateBlock] = "Date is required.";
   }
 
-  if (!fullDayOverview) {
+  if (!fullDayOverview.trim()) {
     errors[CALLBACKS.eodFullDayOverviewBlock] = "Full Day Overview is required.";
   }
 
@@ -751,7 +786,8 @@ function validateEodForm(values: ModalState | undefined) {
     success: true as const,
     values: {
       date: date as string,
-      fullDayOverview: fullDayOverview as string,
+      fullDayOverview,
+      fullDayOverviewContent,
       jsaSubmitted: jsaSubmitted as EodYesNo,
       numberOfScansCompleted: Number(scansCompletedValue),
       totalScanningTimeHours: Number(scanningTimeValue),
@@ -1716,6 +1752,7 @@ export function registerSlackHandlers(app: App): void {
         parentEpicKey: context.parentEpicKey,
         summary,
         details,
+        descriptionContent: buildEodDescriptionContent(context, validation.values),
         requesterName: body.user.id
       });
       const completionMessage = buildEodCompletionMessage({

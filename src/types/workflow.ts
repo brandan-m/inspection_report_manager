@@ -27,12 +27,30 @@ export interface WorkflowDefinition {
   intakeForm?: "generic" | "ehs";
 }
 
+export type JiraTextMark =
+  | {
+      type: "strong";
+    }
+  | {
+      type: "em";
+    }
+  | {
+      type: "code";
+    }
+  | {
+      type: "strike";
+    }
+  | {
+      type: "link";
+      attrs: {
+        href: string;
+      };
+    };
+
 export interface JiraTextNode {
   type: "text";
   text: string;
-  marks?: Array<{
-    type: "strong";
-  }>;
+  marks?: JiraTextMark[];
 }
 
 export interface JiraParagraphNode {
@@ -48,7 +66,41 @@ export interface JiraHeadingNode {
   content: JiraTextNode[];
 }
 
-export type JiraDocNode = JiraParagraphNode | JiraHeadingNode;
+export interface JiraListItemNode {
+  type: "listItem";
+  content: JiraParagraphNode[];
+}
+
+export interface JiraBulletListNode {
+  type: "bulletList";
+  content: JiraListItemNode[];
+}
+
+export interface JiraOrderedListNode {
+  type: "orderedList";
+  attrs?: {
+    order: number;
+  };
+  content: JiraListItemNode[];
+}
+
+export interface JiraBlockquoteNode {
+  type: "blockquote";
+  content: JiraParagraphNode[];
+}
+
+export interface JiraCodeBlockNode {
+  type: "codeBlock";
+  content: JiraTextNode[];
+}
+
+export type JiraDocNode =
+  | JiraParagraphNode
+  | JiraHeadingNode
+  | JiraBulletListNode
+  | JiraOrderedListNode
+  | JiraBlockquoteNode
+  | JiraCodeBlockNode;
 
 export interface CreateIssueInput {
   workflow: WorkflowDefinition;
@@ -75,6 +127,7 @@ export interface IssueOption {
 export interface EodReportFormValues {
   date: string;
   fullDayOverview: string;
+  fullDayOverviewContent?: JiraDocNode[];
   jsaSubmitted: EodYesNo;
   numberOfScansCompleted: number;
   totalScanningTimeHours: number;
