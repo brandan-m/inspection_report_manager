@@ -11,6 +11,7 @@ import type {
   EodAssetType,
   EhsFormValues,
   JiraDocNode,
+  JiraTextNode,
   EodReportFormValues,
   EodThreadContext,
   EodYesNo,
@@ -19,6 +20,7 @@ import type {
   WorkflowDefinition
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
+import { richTextInputBlock } from "./richText.js";
 
 const EOD_ASSET_TYPES: EodAssetType[] = [
   "Kiln",
@@ -120,6 +122,21 @@ function plainTextInputBlock(
       type: "plain_text",
       text: label
     }
+  };
+}
+
+function jiraText(text: string, marks?: JiraTextNode["marks"]): JiraTextNode {
+  return {
+    type: "text",
+    text,
+    ...(marks?.length ? { marks } : {})
+  };
+}
+
+function jiraParagraph(label: string, value: string): JiraDocNode {
+  return {
+    type: "paragraph",
+    content: [jiraText(`${label}: `, [{ type: "strong" }]), jiraText(value)]
   };
 }
 
@@ -481,7 +498,7 @@ export function buildEodReportModal(context: EodThreadContext) {
     },
     submit: {
       type: "plain_text" as const,
-      text: "Create Jira Issue"
+      text: "Submit"
     },
     close: {
       type: "plain_text" as const,
@@ -511,13 +528,11 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "Date"
         }
       },
-      plainTextInputBlock(
+      richTextInputBlock(
         CALLBACKS.eodFullDayOverviewBlock,
         CALLBACKS.eodFullDayOverviewAction,
         "Full Day Overview",
-        "Add timing, crew movement, and operational notes for the day",
-        undefined,
-        true
+        "Add timing, crew movement, and operational notes for the day"
       ),
       {
         type: "input",
@@ -590,17 +605,61 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `Asset Type: ${context.assetType}`,
     `Asset Number: ${context.assetNumber}`,
     `Date: ${values.date}`,
-    `Full Day Overview: ${values.fullDayOverview}`,
+    `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
     `Number of Scans Completed: ${values.numberOfScansCompleted}`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   ];
 
   if (values.notes?.trim()) {
-    lines.push(`Notes: ${values.notes.trim()}`);
+    lines.push(`Notes:\n${values.notes.trim()}`);
   }
 
   return lines.join("\n");
+}
+
+export function buildEodDescriptionContent(context: EodThreadContext, values: EodReportFormValues): JiraDocNode[] {
+  const content: JiraDocNode[] = [
+    jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
+    jiraParagraph("Asset", context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected"),
+    jiraParagraph("Asset Type", context.assetType),
+    jiraParagraph("Asset Number", context.assetNumber),
+    jiraParagraph("Date", values.date),
+    {
+      type: "heading",
+      attrs: {
+        level: 2
+      },
+      content: [jiraText("Full Day Overview")]
+    },
+    ...(values.fullDayOverviewContent?.length
+      ? values.fullDayOverviewContent
+      : [
+          {
+            type: "paragraph",
+            content: [jiraText(values.fullDayOverview)]
+          } satisfies JiraDocNode
+        ]),
+    jiraParagraph("JSA Submitted", values.jsaSubmitted),
+    jiraParagraph("Number of Scans Completed", String(values.numberOfScansCompleted)),
+    jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
+  ];
+
+  if (values.notes?.trim()) {
+    content.push({
+      type: "heading",
+      attrs: {
+        level: 2
+      },
+      content: [jiraText("Notes")]
+    });
+    content.push({
+      type: "paragraph",
+      content: [jiraText(values.notes.trim())]
+    });
+  }
+
+  return content;
 }
 
 export function buildEodReportSummary(context: EodThreadContext, values: EodReportFormValues): string {
