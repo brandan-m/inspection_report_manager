@@ -12,7 +12,7 @@ import {
   type EhsModalStateValues
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
-import { buildEpicSearchJql, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
+import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import type {
   BlockerType,
   EodAssetType,
@@ -23,6 +23,7 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  buildEodDescriptionContent,
   buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
@@ -36,6 +37,7 @@ import {
   shouldCollectEodInThread,
   usesEhsSpecificFields
 } from "./modal.js";
+import { type SlackRichTextBlock, richTextToJiraDocNodes, richTextToPlainText } from "./richText.js";
 
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
@@ -62,6 +64,24 @@ function getPlainTextValue(
 
   if (action && "value" in action) {
     return action.value ?? undefined;
+  }
+
+  return undefined;
+}
+
+function getRichTextValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): SlackRichTextBlock | undefined {
+  const action = stateValues?.[blockId]?.[actionId] as
+    | {
+        rich_text_value?: SlackRichTextBlock;
+      }
+    | undefined;
+
+  if (action?.rich_text_value?.type === "rich_text") {
+    return action.rich_text_value;
   }
 
   return undefined;
@@ -177,7 +197,6 @@ function parseBlockerType(value?: string): BlockerType | undefined {
 function parseEodAssetType(value?: string): EodAssetType | undefined {
   return value === "Kiln" ||
     value === "Hood" ||
-    value === "Above Ground Storage Tank" ||
     value === "Tank" ||
     value === "Drum" ||
     value === "Vessel" ||
@@ -242,11 +261,6 @@ function getModalStateValues(stateValues?: ModalState) {
         : undefined,
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
-    ),
-    eodAssetNumber: getPlainTextValue(
-      stateValues,
-      CALLBACKS.eodAssetNumberBlock,
-      CALLBACKS.eodAssetNumberAction
     ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
@@ -335,8 +349,10 @@ function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey
   return context.parentEpicLabel?.trim() || context.parentEpicKey;
 }
 
-function getParentTaskLabel(context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel">): string {
-  return context.parentTaskLabel?.trim() || context.parentTaskKey || "Not selected";
+function getParentTaskLabel(
+  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+): string {
+  return context.parentTaskLabel?.trim() || context.parentTaskSummary.trim() || context.parentTaskKey;
 }
 
 function buildEodThreadStartMessage(context: EodThreadContext) {
@@ -347,8 +363,6 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
     `*Parent Inspection:* ${parentInspection}\n` +
     `*Asset:* ${assetTask}\n` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
-    `*Asset Number:* ${escapeSlackText(context.assetNumber)}\n` +
-    `${context.parentTaskKey ? "" : "*Warning:* No asset task was selected for this thread.\n"}` +
     `*Created by:* <@${context.requesterId}>`;
 
   return {
@@ -393,24 +407,18 @@ function buildEodCompletionMessage(input: {
     getParentInspectionLabel(input.context)
   );
   const assetTask = buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context));
-  const lines = [
+  const headerLines = [
     `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
     `*Parent Inspection:* ${parentInspection}`,
     `*Asset:* ${assetTask}`,
     `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
-    `*Asset Number:* ${escapeSlackText(input.context.assetNumber)}`,
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
-    `*Full Day Overview:* ${escapeSlackText(input.values.fullDayOverview)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
     `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
-
-  if (input.values.notes?.trim()) {
-    lines.push(`*Notes:* ${escapeSlackText(input.values.notes.trim())}`);
-  }
 
   return {
     text: `EOD Report generated: ${input.issueKey} for ${input.context.parentEpicKey}.`,
@@ -419,9 +427,27 @@ function buildEodCompletionMessage(input: {
         type: "section" as const,
         text: {
           type: "mrkdwn" as const,
-          text: lines.join("\n")
+          text: headerLines.join("\n")
         }
-      }
+      },
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: `*Full Day Overview:*\n${escapeSlackText(input.values.fullDayOverview)}`
+        }
+      },
+      ...(input.values.notes?.trim()
+        ? [
+            {
+              type: "section" as const,
+              text: {
+                type: "mrkdwn" as const,
+                text: `*Notes:*\n${escapeSlackText(input.values.notes.trim())}`
+              }
+            }
+          ]
+        : [])
     ]
   };
 }
@@ -647,11 +673,13 @@ async function createEodThread(
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
-  const fullDayOverview = getPlainTextValue(
+  const fullDayOverviewValue = getRichTextValue(
     values,
     CALLBACKS.eodFullDayOverviewBlock,
     CALLBACKS.eodFullDayOverviewAction
   );
+  const fullDayOverview = richTextToPlainText(fullDayOverviewValue);
+  const fullDayOverviewContent = richTextToJiraDocNodes(fullDayOverviewValue);
   const jsaSubmitted = parseEodYesNo(
     getSelectedOptionValue(values?.[CALLBACKS.eodJsaSubmittedBlock]?.[CALLBACKS.eodJsaSubmittedAction])
   );
@@ -671,7 +699,7 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodDateBlock] = "Date is required.";
   }
 
-  if (!fullDayOverview) {
+  if (!fullDayOverview.trim()) {
     errors[CALLBACKS.eodFullDayOverviewBlock] = "Full Day Overview is required.";
   }
 
@@ -702,7 +730,8 @@ function validateEodForm(values: ModalState | undefined) {
     success: true as const,
     values: {
       date: date as string,
-      fullDayOverview: fullDayOverview as string,
+      fullDayOverview,
+      fullDayOverviewContent,
       jsaSubmitted: jsaSubmitted as EodYesNo,
       numberOfScansCompleted: Number(scansCompletedValue),
       totalScanningTimeHours: Number(scanningTimeValue),
@@ -1214,8 +1243,6 @@ export function registerSlackHandlers(app: App): void {
     const selectedThreadAssetType = parseEodAssetType(
       getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     );
-    const selectedThreadAssetNumber =
-      getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction) ?? "";
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -1280,11 +1307,11 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (isEod && !selectedThreadAssetNumber.trim()) {
+    if (isEod && !parentTaskKey) {
       await ack({
         response_action: "errors",
         errors: {
-          [CALLBACKS.eodAssetNumberBlock]: "Please enter an asset number."
+          [CALLBACKS.eodTaskBlock]: "Please choose an asset task."
         }
       });
       return;
@@ -1328,26 +1355,28 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       if (isEod) {
+        if (!parentTaskKey) {
+          throw new Error("Asset task is required for EOD intake.");
+        }
+
+        const selectedParentTaskKey = parentTaskKey;
+        const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
         const threadContext = await createEodThread(client, {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
-          parentTaskKey,
+          parentTaskKey: selectedParentTaskKey,
           parentTaskLabel,
+          parentTaskSummary,
           assetType: selectedThreadAssetType as EodAssetType,
-          assetNumber: selectedThreadAssetNumber.trim(),
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
 
-        const taskWarning = parentTaskKey
-          ? ""
-          : " No asset task was selected, so you may want to update the thread manually before generating reports.";
-
         await trySendDirectMessage(
           client,
           body.user.id,
-          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.${taskWarning}`,
+          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.`,
           undefined,
           logger
         );
@@ -1461,6 +1490,7 @@ export function registerSlackHandlers(app: App): void {
         parentEpicKey: context.parentEpicKey,
         summary,
         details,
+        descriptionContent: buildEodDescriptionContent(context, validation.values),
         requesterName: body.user.id
       });
       const completionMessage = buildEodCompletionMessage({

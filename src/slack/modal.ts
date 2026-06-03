@@ -11,6 +11,7 @@ import type {
   EodAssetType,
   EhsFormValues,
   JiraDocNode,
+  JiraTextNode,
   EodReportFormValues,
   EodThreadContext,
   EodYesNo,
@@ -19,11 +20,11 @@ import type {
   WorkflowDefinition
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
+import { richTextInputBlock } from "./richText.js";
 
 const EOD_ASSET_TYPES: EodAssetType[] = [
   "Kiln",
   "Hood",
-  "Above Ground Storage Tank",
   "Tank",
   "Drum",
   "Vessel",
@@ -122,13 +123,27 @@ function plainTextInputBlock(
   };
 }
 
+function jiraText(text: string, marks?: JiraTextNode["marks"]): JiraTextNode {
+  return {
+    type: "text",
+    text,
+    ...(marks?.length ? { marks } : {})
+  };
+}
+
+function jiraParagraph(label: string, value: string): JiraDocNode {
+  return {
+    type: "paragraph",
+    content: [jiraText(`${label}: `, [{ type: "strong" }]), jiraText(value)]
+  };
+}
+
 export interface ModalStateValues {
   parentEpicKey?: string;
   parentEpicLabel?: string;
   eodTaskKey?: string;
   eodTaskLabel?: string;
   eodAssetType?: EodAssetType;
-  eodAssetNumber?: string;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -347,14 +362,7 @@ export function buildCreateIssueModal(
           type: "plain_text",
           text: "Asset Type"
         }
-      },
-      plainTextInputBlock(
-        CALLBACKS.eodAssetNumberBlock,
-        CALLBACKS.eodAssetNumberAction,
-        "Asset Number",
-        "Asset number",
-        state.eodAssetNumber
-      )
+      }
     );
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
@@ -409,8 +417,9 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
   if (
     !parsed.workflowKey ||
     !parsed.parentEpicKey ||
+    !parsed.parentTaskKey ||
+    !parsed.parentTaskSummary ||
     !parsed.assetType ||
-    !parsed.assetNumber ||
     !parsed.requesterId ||
     !parsed.channelId ||
     !parsed.threadTs
@@ -424,8 +433,8 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     parentEpicLabel: parsed.parentEpicLabel,
     parentTaskKey: parsed.parentTaskKey,
     parentTaskLabel: parsed.parentTaskLabel,
+    parentTaskSummary: parsed.parentTaskSummary,
     assetType: parsed.assetType,
-    assetNumber: parsed.assetNumber,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs
@@ -434,7 +443,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
 
 export function buildEodReportModal(context: EodThreadContext) {
   const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
-  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected";
+  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey;
 
   return {
     type: "modal" as const,
@@ -446,7 +455,7 @@ export function buildEodReportModal(context: EodThreadContext) {
     },
     submit: {
       type: "plain_text" as const,
-      text: "Create Jira Issue"
+      text: "Submit"
     },
     close: {
       type: "plain_text" as const,
@@ -460,8 +469,7 @@ export function buildEodReportModal(context: EodThreadContext) {
           text:
             `*Parent Inspection:* ${parentInspectionLabel}\n` +
             `*Asset:* ${parentTaskLabel}\n` +
-            `*Asset Type:* ${context.assetType}\n` +
-            `*Asset Number:* ${context.assetNumber}`
+            `*Asset Type:* ${context.assetType}`
         }
       },
       {
@@ -476,13 +484,11 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "Date"
         }
       },
-      plainTextInputBlock(
+      richTextInputBlock(
         CALLBACKS.eodFullDayOverviewBlock,
         CALLBACKS.eodFullDayOverviewAction,
         "Full Day Overview",
-        "Add timing, crew movement, and operational notes for the day",
-        undefined,
-        true
+        "Add timing, crew movement, and operational notes for the day"
       ),
       {
         type: "input",
@@ -551,25 +557,68 @@ export function buildEodReportModal(context: EodThreadContext) {
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const lines = [
     `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
-    `Asset: ${context.parentTaskLabel ?? context.parentTaskKey ?? "Not selected"}`,
+    `Asset: ${context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey}`,
     `Asset Type: ${context.assetType}`,
-    `Asset Number: ${context.assetNumber}`,
     `Date: ${values.date}`,
-    `Full Day Overview: ${values.fullDayOverview}`,
+    `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
     `Number of Scans Completed: ${values.numberOfScansCompleted}`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   ];
 
   if (values.notes?.trim()) {
-    lines.push(`Notes: ${values.notes.trim()}`);
+    lines.push(`Notes:\n${values.notes.trim()}`);
   }
 
   return lines.join("\n");
 }
 
+export function buildEodDescriptionContent(context: EodThreadContext, values: EodReportFormValues): JiraDocNode[] {
+  const content: JiraDocNode[] = [
+    jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
+    jiraParagraph("Asset", context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey),
+    jiraParagraph("Asset Type", context.assetType),
+    jiraParagraph("Date", values.date),
+    {
+      type: "heading",
+      attrs: {
+        level: 2
+      },
+      content: [jiraText("Full Day Overview")]
+    },
+    ...(values.fullDayOverviewContent?.length
+      ? values.fullDayOverviewContent
+      : [
+          {
+            type: "paragraph",
+            content: [jiraText(values.fullDayOverview)]
+          } satisfies JiraDocNode
+        ]),
+    jiraParagraph("JSA Submitted", values.jsaSubmitted),
+    jiraParagraph("Number of Scans Completed", String(values.numberOfScansCompleted)),
+    jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
+  ];
+
+  if (values.notes?.trim()) {
+    content.push({
+      type: "heading",
+      attrs: {
+        level: 2
+      },
+      content: [jiraText("Notes")]
+    });
+    content.push({
+      type: "paragraph",
+      content: [jiraText(values.notes.trim())]
+    });
+  }
+
+  return content;
+}
+
 export function buildEodReportSummary(context: EodThreadContext, values: EodReportFormValues): string {
-  return `${values.date} ${context.assetType} ${context.assetNumber} EOD Report`;
+  const assetSummary = context.parentTaskSummary.trim() || context.parentTaskLabel?.trim() || context.parentTaskKey;
+  return `${values.date} ${context.assetType} ${assetSummary} EOD Report`.replace(/\s+/g, " ").trim();
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {
