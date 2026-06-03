@@ -4,7 +4,6 @@ export type BlockerType = "Customer" | "Operations" | "Environmental" | "Other";
 export type EodAssetType =
   | "Kiln"
   | "Hood"
-  | "Above Ground Storage Tank"
   | "Tank"
   | "Drum"
   | "Vessel"
@@ -138,10 +137,10 @@ export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
   parentEpicLabel?: string;
-  parentTaskKey?: string;
+  parentTaskKey: string;
   parentTaskLabel?: string;
+  parentTaskSummary: string;
   assetType: EodAssetType;
-  assetNumber: string;
   requesterId: string;
   channelId: string;
   threadTs: string;

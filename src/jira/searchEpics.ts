@@ -10,16 +10,23 @@ interface JiraSearchResponse {
   }>;
 }
 
+interface JiraIssueResponse {
+  fields: {
+    summary: string;
+  };
+}
+
 let jiraSearchPath: "/rest/api/3/search/jql" | "/rest/api/3/search" = "/rest/api/3/search/jql";
 
 export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
   const escaped = query.replace(/"/g, '\\"').trim();
+  const baseJql = `${workflow.epicSearchJql} AND status != Closed`;
 
   if (!escaped) {
-    return `${workflow.epicSearchJql} ORDER BY updated DESC`;
+    return `${baseJql} ORDER BY updated DESC`;
   }
 
-  return `${workflow.epicSearchJql} AND (summary ~ "${escaped}*" OR key ~ "${escaped}*") ORDER BY updated DESC`;
+  return `${baseJql} AND (summary ~ "${escaped}*" OR key ~ "${escaped}*") ORDER BY updated DESC`;
 }
 
 export async function searchEpics(workflow: WorkflowDefinition, query: string): Promise<EpicOption[]> {
@@ -115,4 +122,12 @@ export async function searchChildTasks(
   }
 
   return runTaskSearch(fallbackJqlBase);
+}
+
+export async function getIssueSummary(issueKey: string): Promise<string> {
+  const result = await jiraRequest<JiraIssueResponse>(
+    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary`
+  );
+
+  return result.fields.summary;
 }

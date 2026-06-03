@@ -12,8 +12,8 @@ import {
   type EhsModalStateValues
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
+import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import { linkIssuesByRelationship } from "../jira/issueLinks.js";
-import { buildEpicSearchJql, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import type {
   BlockerType,
   EodAssetType,
@@ -216,7 +216,6 @@ function parseBlockerType(value?: string): BlockerType | undefined {
 function parseEodAssetType(value?: string): EodAssetType | undefined {
   return value === "Kiln" ||
     value === "Hood" ||
-    value === "Above Ground Storage Tank" ||
     value === "Tank" ||
     value === "Drum" ||
     value === "Vessel" ||
@@ -282,11 +281,6 @@ function getModalStateValues(stateValues?: ModalState) {
         : undefined,
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
-    ),
-    eodAssetNumber: getPlainTextValue(
-      stateValues,
-      CALLBACKS.eodAssetNumberBlock,
-      CALLBACKS.eodAssetNumberAction
     ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
@@ -375,8 +369,10 @@ function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey
   return context.parentEpicLabel?.trim() || context.parentEpicKey;
 }
 
-function getParentTaskLabel(context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel">): string {
-  return context.parentTaskLabel?.trim() || context.parentTaskKey || "Not selected";
+function getParentTaskLabel(
+  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+): string {
+  return context.parentTaskLabel?.trim() || context.parentTaskSummary.trim() || context.parentTaskKey;
 }
 
 function buildEodThreadStartMessage(context: EodThreadContext) {
@@ -387,8 +383,6 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
     `*Parent Inspection:* ${parentInspection}\n` +
     `*Asset:* ${assetTask}\n` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
-    `*Asset Number:* ${escapeSlackText(context.assetNumber)}\n` +
-    `${context.parentTaskKey ? "" : "*Warning:* No asset task was selected for this thread.\n"}` +
     `*Created by:* <@${context.requesterId}>`;
 
   return {
@@ -439,7 +433,6 @@ function buildEodCompletionMessage(input: {
     `*Parent Inspection:* ${parentInspection}`,
     `*Asset:* ${assetTask}`,
     `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
-    `*Asset Number:* ${escapeSlackText(input.context.assetNumber)}`,
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
@@ -1362,8 +1355,6 @@ export function registerSlackHandlers(app: App): void {
     const selectedThreadAssetType = parseEodAssetType(
       getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     );
-    const selectedThreadAssetNumber =
-      getPlainTextValue(values, CALLBACKS.eodAssetNumberBlock, CALLBACKS.eodAssetNumberAction) ?? "";
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -1467,11 +1458,11 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (isEod && !selectedThreadAssetNumber.trim()) {
+    if (isEod && !parentTaskKey) {
       await ack({
         response_action: "errors",
         errors: {
-          [CALLBACKS.eodAssetNumberBlock]: "Please enter an asset number."
+          [CALLBACKS.eodTaskBlock]: "Please choose an asset task."
         }
       });
       return;
@@ -1565,6 +1556,12 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       if (isEod) {
+        if (!parentTaskKey) {
+          throw new Error("Asset task is required for EOD intake.");
+        }
+
+        const selectedParentTaskKey = parentTaskKey;
+        const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
         logger.info(
           `Creating EOD intake thread ${JSON.stringify({
             workflowKey: workflow.key,
@@ -1577,22 +1574,18 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
-          parentTaskKey,
+          parentTaskKey: selectedParentTaskKey,
           parentTaskLabel,
+          parentTaskSummary,
           assetType: selectedThreadAssetType as EodAssetType,
-          assetNumber: selectedThreadAssetNumber.trim(),
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
 
-        const taskWarning = parentTaskKey
-          ? ""
-          : " No asset task was selected, so you may want to update the thread manually before generating reports.";
-
         await trySendDirectMessage(
           client,
           body.user.id,
-          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.${taskWarning}`,
+          `Started EOD intake thread for ${parentEpicKey} in <#${threadContext.channelId}>. Open the thread and click "Generate EOD Report" to finish the Jira issue.`,
           undefined,
           logger
         );
