@@ -38,6 +38,7 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
   "Towers"
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
+const CHANNEL_CONVERSATION_TYPES: Array<"public"> = ["public"];
 
 function workflowOptions(): PlainTextOption[] {
   return listWorkflows().map((workflow) => ({
@@ -139,6 +140,7 @@ function jiraParagraph(label: string, value: string): JiraDocNode {
 }
 
 export interface ModalStateValues {
+  channelId?: string;
   parentEpicKey?: string;
   parentEpicLabel?: string;
   eodTaskKey?: string;
@@ -155,6 +157,7 @@ export interface ModalStateValues {
 export interface ModalMetadata {
   workflowKey: string;
   channelId?: string;
+  requireChannelSelection?: boolean;
 }
 
 function requiresBugFields(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
@@ -214,6 +217,38 @@ export function buildCreateIssueModal(
         options: workflowOptions()
       }
     },
+    ...(metadata.requireChannelSelection
+      ? [
+          {
+            type: "section" as const,
+            text: {
+              type: "mrkdwn" as const,
+              text:
+                "*Choose Channel*\nWe couldn't determine where to post this workflow's Slack follow-up. Pick a public channel to continue."
+            }
+          },
+          {
+            type: "input" as const,
+            block_id: CALLBACKS.channelBlock,
+            element: {
+              type: "conversations_select" as const,
+              action_id: CALLBACKS.channelAction,
+              initial_conversation: state.channelId ?? metadata.channelId,
+              filter: {
+                include: CHANNEL_CONVERSATION_TYPES
+              },
+              placeholder: {
+                type: "plain_text" as const,
+                text: "Choose the Slack channel for this report"
+              }
+            },
+            label: {
+              type: "plain_text" as const,
+              text: "Channel"
+            }
+          }
+        ]
+      : []),
     {
       type: "section",
       block_id: CALLBACKS.epicBlock,

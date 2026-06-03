@@ -13,6 +13,7 @@ import {
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
 import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
+import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
   BlockerType,
   EodAssetType,
@@ -101,6 +102,20 @@ function getSelectedOptionsValues(
   return [];
 }
 
+function getSelectedConversationValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string | undefined {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "selected_conversation" in action) {
+    return action.selected_conversation ?? undefined;
+  }
+
+  return undefined;
+}
+
 function getDateValue(
   stateValues: ModalState | undefined,
   blockId: string,
@@ -135,6 +150,10 @@ function getWorkflowKeyFromViewMetadata(view?: { private_metadata?: string }): s
 
 function getChannelIdFromViewMetadata(view?: { private_metadata?: string }): string | undefined {
   return parseModalMetadata(view)?.channelId;
+}
+
+function getRequireChannelSelectionFromViewMetadata(view?: { private_metadata?: string }): boolean {
+  return parseModalMetadata(view)?.requireChannelSelection ?? false;
 }
 
 function getChannelIdFromActionBody(body: unknown): string | undefined {
@@ -242,6 +261,7 @@ function getModalStateValues(stateValues?: ModalState) {
   );
 
   return {
+    channelId: getSelectedConversationValue(stateValues, CALLBACKS.channelBlock, CALLBACKS.channelAction),
     selectedIssueType: getSelectedIssueTypeFromState(stateValues),
     parentEpicKey:
       parentEpicSelection && "selected_option" in parentEpicSelection
@@ -670,6 +690,36 @@ async function createEodThread(
   return threadContext;
 }
 
+function summarizeCreateIssueSubmission(input: {
+  workflowKey: string;
+  jiraProjectKey: string;
+  userId: string;
+  channelId?: string;
+  issueTypeValue?: string;
+  parentEpicKey?: string;
+  summary?: string | null;
+  details?: string | null;
+  blockerTypeValue?: string;
+  downtimeValue: string;
+  isEod: boolean;
+  isEhsTask: boolean;
+}) {
+  return JSON.stringify({
+    workflowKey: input.workflowKey,
+    jiraProjectKey: input.jiraProjectKey,
+    userId: input.userId,
+    channelId: input.channelId ?? null,
+    issueType: input.issueTypeValue ?? null,
+    parentEpicKey: input.parentEpicKey ?? null,
+    summaryLength: (input.summary ?? "").trim().length,
+    detailsLength: (input.details ?? "").trim().length,
+    blockerType: input.blockerTypeValue ?? null,
+    downtimeValue: input.downtimeValue || null,
+    isEod: input.isEod,
+    isEhsTask: input.isEhsTask
+  });
+}
+
 function validateEodForm(values: ModalState | undefined) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
@@ -955,7 +1005,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1003,7 +1054,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1056,7 +1108,8 @@ export function registerSlackHandlers(app: App): void {
             },
             {
               workflowKey: workflow.key,
-              channelId: getChannelIdFromViewMetadata(body.view)
+              channelId: nextState.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
             }
           )
         },
@@ -1100,7 +1153,8 @@ export function registerSlackHandlers(app: App): void {
               },
               {
                 workflowKey: workflow.key,
-                channelId: getChannelIdFromViewMetadata(body.view)
+                channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+                requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
               }
             )
           },
@@ -1209,10 +1263,68 @@ export function registerSlackHandlers(app: App): void {
     }
   });
 
+  app.action(CALLBACKS.eodTaskAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD task selection action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+    const state = getModalStateValues(body.view.state.values);
+    const selectedTaskKey = getSelectedOptionValue(body.actions[0]);
+    const selectedTaskLabel =
+      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+      ? state.selectedIssueType
+      : workflow.allowedIssueTypes[0];
+
+    logger.info(
+      `Attempting modal EOD task update for workflow ${workflow.key} to task=${selectedTaskKey ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              eodTaskKey: selectedTaskKey,
+              eodTaskLabel: selectedTaskLabel,
+              selectedIssueType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal EOD task update for workflow ${workflow.key}`
+      );
+    } catch {
+      return;
+    }
+
+    logger.info(`Updated modal EOD task for workflow ${workflow.key} to ${selectedTaskKey ?? "n/a"}`);
+  });
+
   app.view(CALLBACKS.createIssueView, async ({ ack, body, client, logger, view }) => {
     const workflowKey =
       getWorkflowKeyFromViewMetadata(view) ?? getSelectedWorkflowKeyFromState(view.state.values);
-    const channelId = getChannelIdFromViewMetadata(view);
+    const stateChannelId = getSelectedConversationValue(
+      view.state.values,
+      CALLBACKS.channelBlock,
+      CALLBACKS.channelAction
+    );
+    const channelId = stateChannelId ?? getChannelIdFromViewMetadata(view);
     const values = view.state.values;
     const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
@@ -1260,8 +1372,33 @@ export function registerSlackHandlers(app: App): void {
     const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
     const isEod = selectedIssueType === "EOD Report";
     const isEhsTask = selectedIssueType ? usesEhsSpecificFields(workflow, selectedIssueType) : false;
+    const submissionSummary = summarizeCreateIssueSubmission({
+      workflowKey: workflow.key,
+      jiraProjectKey: workflow.jiraProjectKey,
+      userId: body.user.id,
+      channelId,
+      issueTypeValue,
+      parentEpicKey,
+      summary,
+      details,
+      blockerTypeValue,
+      downtimeValue,
+      isEod,
+      isEhsTask
+    });
+
+    logger.info(`Received create issue submission ${submissionSummary}`);
 
     if (!parentEpicKey || !issueTypeValue || (!isEod && !isEhsTask && !summary)) {
+      logger.info(
+        `Rejecting create issue submission for missing required top-level fields ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          parentEpicKeyMissing: !parentEpicKey,
+          issueTypeMissing: !issueTypeValue,
+          summaryMissing: !isEod && !isEhsTask && !summary
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1276,6 +1413,13 @@ export function registerSlackHandlers(app: App): void {
     }
 
     if (!selectedIssueType) {
+      logger.info(
+        `Rejecting create issue submission because issue type could not be parsed ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueTypeValue: issueTypeValue ?? null
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1286,6 +1430,13 @@ export function registerSlackHandlers(app: App): void {
     }
 
     if (!isEod && !isEhsTask && !details) {
+      logger.info(
+        `Rejecting create issue submission for missing details ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueType: selectedIssueType
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: {
@@ -1333,6 +1484,14 @@ export function registerSlackHandlers(app: App): void {
       }
 
       if (Object.keys(errors).length > 0) {
+        logger.info(
+          `Rejecting bug submission for missing workflow-specific fields ${JSON.stringify({
+            workflowKey: workflow.key,
+            userId: body.user.id,
+            issueType: selectedIssueType,
+            errors
+          })}`
+        );
         await ack({
           response_action: "errors",
           errors
@@ -1344,6 +1503,13 @@ export function registerSlackHandlers(app: App): void {
     const ehsValidation = isEhsTask ? validateEhsForm(values) : undefined;
 
     if (ehsValidation && !ehsValidation.success) {
+      logger.info(
+        `Rejecting EHS submission for validation errors ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          errors: ehsValidation.errors
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: ehsValidation.errors
@@ -1351,7 +1517,42 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    if (!channelId) {
+      logger.info(
+        `Prompting for fallback channel selection before completing submission ${JSON.stringify({
+          workflowKey: workflow.key,
+          userId: body.user.id,
+          issueType: selectedIssueType,
+          parentEpicKey
+        })}`
+      );
+      await ack({
+        response_action: "update",
+        view: buildCreateIssueModal(
+          workflow,
+          {
+            ...getModalStateValues(values),
+            selectedIssueType
+          },
+          {
+            workflowKey: workflow.key,
+            requireChannelSelection: true
+          }
+        )
+      });
+      return;
+    }
+
     await ack();
+    logger.info(
+      `Accepted create issue submission and beginning processing ${JSON.stringify({
+        workflowKey: workflow.key,
+        userId: body.user.id,
+        issueType: selectedIssueType,
+        parentEpicKey,
+        channelId: channelId ?? null
+      })}`
+    );
 
     try {
       if (isEod) {
@@ -1361,6 +1562,14 @@ export function registerSlackHandlers(app: App): void {
 
         const selectedParentTaskKey = parentTaskKey;
         const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
+        logger.info(
+          `Creating EOD intake thread ${JSON.stringify({
+            workflowKey: workflow.key,
+            userId: body.user.id,
+            parentEpicKey,
+            channelId: getEodChannelId(channelId)
+          })}`
+        );
         const threadContext = await createEodThread(client, {
           workflowKey: workflow.key,
           parentEpicKey,
@@ -1395,6 +1604,21 @@ export function registerSlackHandlers(app: App): void {
         descriptionContent = buildEhsDescriptionContent(ehsValidation.values);
       }
 
+      logger.info(
+        `Creating Jira issue ${JSON.stringify({
+          workflowKey: workflow.key,
+          jiraProjectKey: workflow.jiraProjectKey,
+          userId: body.user.id,
+          issueType: selectedIssueType,
+          parentEpicKey,
+          summaryLength: issueSummary.trim().length,
+          detailsLength: issueDetails.trim().length,
+          blockerType: blockerTypeValue ?? null,
+          opsDowntimeHours: downtimeValue ? Number(downtimeValue) : null,
+          hasDescriptionContent: Boolean(descriptionContent)
+        })}`
+      );
+
       const issue = await createIssue({
         workflow,
         issueType: selectedIssueType,
@@ -1427,6 +1651,10 @@ export function registerSlackHandlers(app: App): void {
         } catch (error) {
           logger.warn("Could not post Jira issue confirmation to the originating Slack channel.", error);
         }
+      } else {
+        logger.info(
+          `Skipping channel confirmation for Jira issue ${issue.key} because no originating channel was captured.`
+        );
       }
 
       await trySendDirectMessage(
@@ -1471,6 +1699,14 @@ export function registerSlackHandlers(app: App): void {
     const validation = validateEodForm(view.state.values);
 
     if (!validation.success) {
+      logger.info(
+        `Rejecting EOD report submission for validation errors ${JSON.stringify({
+          workflowKey: context.workflowKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          errors: validation.errors
+        })}`
+      );
       await ack({
         response_action: "errors",
         errors: validation.errors
@@ -1479,11 +1715,31 @@ export function registerSlackHandlers(app: App): void {
     }
 
     await ack();
+    logger.info(
+      `Accepted EOD report submission ${JSON.stringify({
+        workflowKey: context.workflowKey,
+        userId: body.user.id,
+        threadTs: context.threadTs,
+        channelId: context.channelId,
+        parentEpicKey: context.parentEpicKey
+      })}`
+    );
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
       const summary = buildEodReportSummary(context, validation.values);
       const details = formatEodReportDetails(context, validation.values);
+      logger.info(
+        `Creating EOD Jira issue ${JSON.stringify({
+          workflowKey: workflow.key,
+          jiraProjectKey: workflow.jiraProjectKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          parentEpicKey: context.parentEpicKey,
+          summaryLength: summary.trim().length,
+          detailsLength: details.trim().length
+        })}`
+      );
       const issue = await createIssue({
         workflow,
         issueType: "EOD Report",
@@ -1493,6 +1749,24 @@ export function registerSlackHandlers(app: App): void {
         descriptionContent: buildEodDescriptionContent(context, validation.values),
         requesterName: body.user.id
       });
+
+      if (context.parentTaskKey) {
+        try {
+          await linkIssuesByRelationship({
+            issueKey: issue.key,
+            relatedIssueKey: context.parentTaskKey,
+            relationshipText: "Connects to"
+          });
+          logger.info(`Linked EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey} as "Connects to".`);
+        } catch (error) {
+          logger.warn(
+            `Could not link EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
+
       const completionMessage = buildEodCompletionMessage({
         issueKey: issue.key,
         issueSummary: summary,
