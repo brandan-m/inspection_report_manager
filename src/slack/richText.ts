@@ -4,6 +4,7 @@ import type {
   JiraBulletListNode,
   JiraCodeBlockNode,
   JiraDocNode,
+  JiraInlineNode,
   JiraListItemNode,
   JiraOrderedListNode,
   JiraParagraphNode,
@@ -124,7 +125,7 @@ function textNode(text: string, marks?: JiraTextMark[]): JiraTextNode {
   };
 }
 
-function paragraph(content: JiraTextNode[]): JiraParagraphNode | undefined {
+function paragraph(content: JiraInlineNode[]): JiraParagraphNode | undefined {
   if (content.length === 0) {
     return undefined;
   }
@@ -243,8 +244,39 @@ function inlineElementToJiraTextNodes(element: SlackRichTextInlineElement): Jira
   }
 }
 
+async function inlineElementToResolvedJiraInlineNodes(
+  element: SlackRichTextInlineElement,
+  options: {
+    resolveUserMention?: (userId: string) => Promise<JiraInlineNode>;
+  }
+): Promise<JiraInlineNode[]> {
+  switch (element.type) {
+    case "user":
+      if (options.resolveUserMention) {
+        return [await options.resolveUserMention(element.user_id)];
+      }
+
+      return [textNode(`<@${element.user_id}>`)];
+    default:
+      return inlineElementToJiraTextNodes(element);
+  }
+}
+
 function sectionToParagraph(section: SlackRichTextSectionElement): JiraParagraphNode | undefined {
   return paragraph(section.elements.flatMap(inlineElementToJiraTextNodes));
+}
+
+async function sectionToResolvedParagraph(
+  section: SlackRichTextSectionElement,
+  options: {
+    resolveUserMention?: (userId: string) => Promise<JiraInlineNode>;
+  }
+): Promise<JiraParagraphNode | undefined> {
+  const content = (
+    await Promise.all(section.elements.map((element) => inlineElementToResolvedJiraInlineNodes(element, options)))
+  ).flat();
+
+  return paragraph(content);
 }
 
 function rootElementToJiraNodes(element: SlackRichTextRootElement): JiraDocNode[] {
@@ -317,6 +349,89 @@ function rootElementToJiraNodes(element: SlackRichTextRootElement): JiraDocNode[
   }
 }
 
+async function rootElementToResolvedJiraNodes(
+  element: SlackRichTextRootElement,
+  options: {
+    resolveUserMention?: (userId: string) => Promise<JiraInlineNode>;
+  }
+): Promise<JiraDocNode[]> {
+  switch (element.type) {
+    case "rich_text_section": {
+      const node = await sectionToResolvedParagraph(element, options);
+      return node ? [node] : [];
+    }
+    case "rich_text_quote": {
+      const quoteParagraph = await sectionToResolvedParagraph(
+        {
+          type: "rich_text_section",
+          elements: element.elements
+        },
+        options
+      );
+
+      if (!quoteParagraph) {
+        return [];
+      }
+
+      return [
+        {
+          type: "blockquote",
+          content: [quoteParagraph]
+        } satisfies JiraBlockquoteNode
+      ];
+    }
+    case "rich_text_preformatted": {
+      const text = element.elements.map(inlineElementToPlainText).join("");
+
+      if (!text.trim()) {
+        return [];
+      }
+
+      return [
+        {
+          type: "codeBlock",
+          content: [textNode(text)]
+        } satisfies JiraCodeBlockNode
+      ];
+    }
+    case "rich_text_list": {
+      const sections = await Promise.all(
+        element.elements.map((section) => sectionToResolvedParagraph(section, options))
+      );
+      const items = sections
+        .filter((node): node is JiraParagraphNode => Boolean(node))
+        .map(
+          (node) =>
+            ({
+              type: "listItem",
+              content: [node]
+            }) satisfies JiraListItemNode
+        );
+
+      if (items.length === 0) {
+        return [];
+      }
+
+      if (element.style === "ordered") {
+        return [
+          {
+            type: "orderedList",
+            ...(typeof element.offset === "number" ? { attrs: { order: element.offset + 1 } } : {}),
+            content: items
+          } satisfies JiraOrderedListNode
+        ];
+      }
+
+      return [
+        {
+          type: "bulletList",
+          content: items
+        } satisfies JiraBulletListNode
+      ];
+    }
+  }
+}
+
 export function richTextToPlainText(value?: SlackRichTextBlock): string {
   if (!value) {
     return "";
@@ -335,6 +450,19 @@ export function richTextToJiraDocNodes(value?: SlackRichTextBlock): JiraDocNode[
   }
 
   return value.elements.flatMap(rootElementToJiraNodes);
+}
+
+export async function richTextToResolvedJiraDocNodes(
+  value: SlackRichTextBlock | undefined,
+  options: {
+    resolveUserMention?: (userId: string) => Promise<JiraInlineNode>;
+  } = {}
+): Promise<JiraDocNode[]> {
+  if (!value) {
+    return [];
+  }
+
+  return (await Promise.all(value.elements.map((element) => rootElementToResolvedJiraNodes(element, options)))).flat();
 }
 
 export function richTextInputBlock(

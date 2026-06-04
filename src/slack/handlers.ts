@@ -12,6 +12,7 @@ import {
   type EhsModalStateValues
 } from "../ehs/form.js";
 import { createIssue } from "../jira/createIssue.js";
+import { findJiraUserForSlackProfile } from "../jira/users.js";
 import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
 import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
@@ -20,6 +21,7 @@ import type {
   EhsFormValues,
   EodReportFormValues,
   EodThreadContext,
+  JiraInlineNode,
   EodYesNo
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
@@ -38,7 +40,12 @@ import {
   shouldCollectEodInThread,
   usesEhsSpecificFields
 } from "./modal.js";
-import { type SlackRichTextBlock, richTextToJiraDocNodes, richTextToPlainText } from "./richText.js";
+import {
+  type SlackRichTextBlock,
+  richTextToJiraDocNodes,
+  richTextToPlainText,
+  richTextToResolvedJiraDocNodes
+} from "./richText.js";
 
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
@@ -341,6 +348,95 @@ function formatSlackApiErrorDetails(error: unknown): string {
 
 function escapeSlackText(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function jiraTextNode(text: string): JiraInlineNode {
+  return {
+    type: "text",
+    text
+  };
+}
+
+function formatSlackMentionText(label?: string, fallbackId?: string): string {
+  const trimmed = label?.trim();
+
+  if (trimmed) {
+    return trimmed.startsWith("@") ? trimmed : `@${trimmed}`;
+  }
+
+  return fallbackId ? `<@${fallbackId}>` : "@unknown";
+}
+
+function createSlackToJiraMentionResolver(
+  client: App["client"],
+  logger: Pick<Console, "warn">
+): (userId: string) => Promise<JiraInlineNode> {
+  const cache = new Map<string, Promise<JiraInlineNode>>();
+
+  return (userId: string) => {
+    const cached = cache.get(userId);
+
+    if (cached) {
+      return cached;
+    }
+
+    const pending = (async () => {
+      try {
+        const response = await client.users.info({
+          user: userId
+        });
+        const user = response.user as
+          | {
+              name?: string;
+              real_name?: string;
+              profile?: {
+                email?: string;
+                display_name?: string;
+                display_name_normalized?: string;
+                real_name?: string;
+                real_name_normalized?: string;
+              };
+            }
+          | undefined;
+        const profile = user?.profile;
+        const fallbackText = formatSlackMentionText(
+          profile?.display_name_normalized ||
+            profile?.display_name ||
+            user?.name ||
+            profile?.real_name_normalized ||
+            profile?.real_name ||
+            user?.real_name,
+          userId
+        );
+        const jiraUser = await findJiraUserForSlackProfile({
+          email: profile?.email,
+          displayName: profile?.display_name_normalized || profile?.display_name || user?.name,
+          realName: profile?.real_name_normalized || profile?.real_name || user?.real_name
+        });
+
+        if (!jiraUser) {
+          logger.warn(`Could not resolve Slack user ${userId} to a Jira user.`);
+          return jiraTextNode(fallbackText);
+        }
+
+        return {
+          type: "mention",
+          attrs: {
+            id: jiraUser.accountId,
+            text: formatSlackMentionText(jiraUser.displayName)
+          }
+        } satisfies JiraInlineNode;
+      } catch (error) {
+        logger.warn(
+          `Could not resolve Slack user ${userId} for Jira mentions. ${formatSlackApiErrorDetails(error)}`
+        );
+        return jiraTextNode(`<@${userId}>`);
+      }
+    })();
+
+    cache.set(userId, pending);
+    return pending;
+  };
 }
 
 const SLACK_ENTITY_PATTERN =
@@ -1700,6 +1796,11 @@ export function registerSlackHandlers(app: App): void {
 
   app.view(CALLBACKS.eodReportView, async ({ ack, body, client, logger, view }) => {
     let context: EodThreadContext;
+    const fullDayOverviewValue = getRichTextValue(
+      view.state.values,
+      CALLBACKS.eodFullDayOverviewBlock,
+      CALLBACKS.eodFullDayOverviewAction
+    );
 
     try {
       context = decodeEodThreadContext(view.private_metadata);
@@ -1747,6 +1848,11 @@ export function registerSlackHandlers(app: App): void {
       const workflow = getWorkflowByKey(context.workflowKey);
       const summary = buildEodReportSummary(context, validation.values);
       const details = formatEodReportDetails(context, validation.values);
+      const resolveSlackUserMention = createSlackToJiraMentionResolver(client, logger);
+      const resolvedFullDayOverviewContent = await richTextToResolvedJiraDocNodes(fullDayOverviewValue, {
+        resolveUserMention: resolveSlackUserMention
+      });
+      const requesterContent = [await resolveSlackUserMention(body.user.id)];
       logger.info(
         `Creating EOD Jira issue ${JSON.stringify({
           workflowKey: workflow.key,
@@ -1764,7 +1870,14 @@ export function registerSlackHandlers(app: App): void {
         parentEpicKey: context.parentEpicKey,
         summary,
         details,
-        descriptionContent: buildEodDescriptionContent(context, validation.values),
+        descriptionContent: buildEodDescriptionContent(context, {
+          ...validation.values,
+          fullDayOverviewContent:
+            resolvedFullDayOverviewContent.length > 0
+              ? resolvedFullDayOverviewContent
+              : validation.values.fullDayOverviewContent
+        }),
+        requesterContent,
         requesterName: body.user.id
       });
 

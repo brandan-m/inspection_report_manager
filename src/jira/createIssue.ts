@@ -66,15 +66,23 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
       version: 1,
       content: [
         ...descriptionContent,
-        ...(input.requesterName
+        ...(input.requesterName || input.requesterContent?.length
           ? [
               {
                 type: "paragraph",
                 content: [
                   {
                     type: "text",
-                    text: `Requested from Slack by ${input.requesterName}`
-                  }
+                    text: "Requested from Slack by "
+                  },
+                  ...(input.requesterContent?.length
+                    ? input.requesterContent
+                    : [
+                        {
+                          type: "text",
+                          text: input.requesterName as string
+                        }
+                      ])
                 ]
               }
             ]
