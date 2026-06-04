@@ -343,6 +343,24 @@ function escapeSlackText(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+const SLACK_ENTITY_PATTERN =
+  /<(?:@[A-Z0-9]+(?:\|[^>\n]+)?|!(?:subteam\^[A-Z0-9]+(?:\|[^>\n]+)?|here|channel|everyone)|#[A-Z0-9]+(?:\|[^>\n]+)?)>/g;
+
+function escapeSlackTextPreservingEntities(text: string): string {
+  let lastIndex = 0;
+  let escaped = "";
+
+  for (const match of text.matchAll(SLACK_ENTITY_PATTERN)) {
+    const start = match.index ?? 0;
+    escaped += escapeSlackText(text.slice(lastIndex, start));
+    escaped += match[0];
+    lastIndex = start + match[0].length;
+  }
+
+  escaped += escapeSlackText(text.slice(lastIndex));
+  return escaped;
+}
+
 function buildJiraIssueUrl(issueKey: string): string {
   return new URL(`/browse/${issueKey}`, env.JIRA_BASE_URL).toString();
 }
@@ -454,7 +472,7 @@ function buildEodCompletionMessage(input: {
         type: "section" as const,
         text: {
           type: "mrkdwn" as const,
-          text: `*Full Day Overview:*\n${escapeSlackText(input.values.fullDayOverview)}`
+          text: `*Full Day Overview:*\n${escapeSlackTextPreservingEntities(input.values.fullDayOverview)}`
         }
       },
       ...(input.values.notes?.trim()
@@ -463,7 +481,7 @@ function buildEodCompletionMessage(input: {
               type: "section" as const,
               text: {
                 type: "mrkdwn" as const,
-                text: `*Notes:*\n${escapeSlackText(input.values.notes.trim())}`
+                text: `*Notes:*\n${escapeSlackTextPreservingEntities(input.values.notes.trim())}`
               }
             }
           ]
