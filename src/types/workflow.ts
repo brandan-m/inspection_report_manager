@@ -52,9 +52,19 @@ export interface JiraTextNode {
   marks?: JiraTextMark[];
 }
 
+export interface JiraMentionNode {
+  type: "mention";
+  attrs: {
+    id: string;
+    text: string;
+  };
+}
+
+export type JiraInlineNode = JiraTextNode | JiraMentionNode;
+
 export interface JiraParagraphNode {
   type: "paragraph";
-  content: JiraTextNode[];
+  content: JiraInlineNode[];
 }
 
 export interface JiraHeadingNode {
@@ -108,6 +118,7 @@ export interface CreateIssueInput {
   summary: string;
   details: string;
   descriptionContent?: JiraDocNode[];
+  requesterContent?: JiraInlineNode[];
   requesterName?: string;
   blockerType?: BlockerType;
   opsDowntimeHours?: number;

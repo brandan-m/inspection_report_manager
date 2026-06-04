@@ -113,6 +113,8 @@ Recommended bot scopes:
 - `channels:read`
 - `commands`
 - `im:write`
+- `users:read`
+- `users:read.email`
 
 Suggested global shortcut:
 
@@ -181,6 +183,7 @@ Deployment checklist:
 - store Slack and Jira secrets outside the repo
 - keep Socket Mode enabled, or switch to HTTPS-based event delivery
 - reinstall the Slack app after any scope or manifest changes
+- reinstall the Slack app after adding `users:read` or `users:read.email` so Jira mention resolution can look up Slack users
 - document the workflow config and board/project mappings in `config/workflows.json`
 
 ### Docker-Based Deployment
@@ -234,6 +237,7 @@ Before calling it production-ready:
 
 - verify `npm run build && npm start` works in the host environment
 - confirm Slack scopes include `im:write` if you want DM confirmations
+- confirm Slack scopes include `users:read` and `users:read.email` if you want Slack `@mentions` to become Jira user mentions
 - verify both APIDD and RB flows against live Jira
 - decide whether `SLACK_TEST_CHANNEL_ID` should stay as a test channel or move to a production notifications channel
 - document ownership for future workflow config changes
