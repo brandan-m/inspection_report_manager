@@ -549,6 +549,8 @@ export function buildEodReportModal(context: EodThreadContext) {
           type: "number_input",
           action_id: CALLBACKS.eodScansCompletedAction,
           is_decimal_allowed: false,
+          min_value: "0",
+          max_value: "100",
           placeholder: {
             type: "plain_text",
             text: "0"
@@ -556,7 +558,7 @@ export function buildEodReportModal(context: EodThreadContext) {
         },
         label: {
           type: "plain_text",
-          text: "Number of Scans Completed"
+          text: "sqft. % done"
         }
       },
       {
@@ -597,7 +599,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `Date: ${values.date}`,
     `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
-    `Number of Scans Completed: ${values.numberOfScansCompleted}`,
+    `sqft. % done: ${values.numberOfScansCompleted}%`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   ];
 
@@ -630,7 +632,7 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
           } satisfies JiraDocNode
         ]),
     jiraParagraph("JSA Submitted", values.jsaSubmitted),
-    jiraParagraph("Number of Scans Completed", String(values.numberOfScansCompleted)),
+    jiraParagraph("sqft. % done", `${String(values.numberOfScansCompleted)}%`),
     jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
   ];
 

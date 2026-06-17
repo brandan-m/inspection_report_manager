@@ -550,7 +550,7 @@ function buildEodCompletionMessage(input: {
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
-    `*Number of Scans Completed:* ${String(input.values.numberOfScansCompleted)}`,
+    `*sqft. % done:* ${String(input.values.numberOfScansCompleted)}%`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
 
@@ -872,9 +872,11 @@ function validateEodForm(values: ModalState | undefined) {
   }
 
   if (!scansCompletedValue) {
-    errors[CALLBACKS.eodScansCompletedBlock] = "Number of Scans Completed is required.";
+    errors[CALLBACKS.eodScansCompletedBlock] = "sqft. % done is required.";
   } else if (Number.isNaN(Number(scansCompletedValue))) {
     errors[CALLBACKS.eodScansCompletedBlock] = "Enter a valid number.";
+  } else if (Number(scansCompletedValue) < 0 || Number(scansCompletedValue) > 100) {
+    errors[CALLBACKS.eodScansCompletedBlock] = "Enter a number from 0 to 100.";
   }
 
   if (!scanningTimeValue) {
