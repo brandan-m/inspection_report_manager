@@ -568,6 +568,7 @@ export function buildEodReportModal(context: EodThreadContext) {
           type: "number_input",
           action_id: CALLBACKS.eodScanningTimeAction,
           is_decimal_allowed: true,
+          min_value: "0",
           placeholder: {
             type: "plain_text",
             text: "0"
