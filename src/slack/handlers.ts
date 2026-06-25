@@ -50,6 +50,8 @@ import {
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
 
+const DATA_OPERATIONS_USERGROUP_HANDLE = "data-operations";
+
 function getSelectedOptionValue(
   action:
     | BlockAction["actions"][number]
@@ -439,6 +441,47 @@ function createSlackToJiraMentionResolver(
   };
 }
 
+function createSlackUserGroupMentionResolver(
+  client: App["client"],
+  logger: Pick<Console, "warn">
+): (handle: string) => Promise<string | undefined> {
+  const cache = new Map<string, Promise<string | undefined>>();
+
+  return (handle: string) => {
+    const normalizedHandle = handle.trim().replace(/^@/, "");
+    const cached = cache.get(normalizedHandle);
+
+    if (cached) {
+      return cached;
+    }
+
+    const pending = (async () => {
+      try {
+        const response = await client.usergroups.list({
+          include_disabled: false,
+          include_users: false
+        });
+        const userGroup = response.usergroups?.find((group) => group.handle === normalizedHandle);
+
+        if (!userGroup?.id) {
+          logger.warn(`Could not find Slack user group with handle ${normalizedHandle}.`);
+          return undefined;
+        }
+
+        return `<!subteam^${userGroup.id}>`;
+      } catch (error) {
+        logger.warn(
+          `Could not resolve Slack user group ${normalizedHandle}. ${formatSlackApiErrorDetails(error)}`
+        );
+        return undefined;
+      }
+    })();
+
+    cache.set(normalizedHandle, pending);
+    return pending;
+  };
+}
+
 const SLACK_ENTITY_PATTERN =
   /<(?:@[A-Z0-9]+(?:\|[^>\n]+)?|!(?:subteam\^[A-Z0-9]+(?:\|[^>\n]+)?|here|channel|everyone)|#[A-Z0-9]+(?:\|[^>\n]+)?)>/g;
 
@@ -483,10 +526,20 @@ function getParentInspectionLabel(context: Pick<EodThreadContext, "parentEpicKey
   return context.parentEpicLabel?.trim() || context.parentEpicKey;
 }
 
+function getParentInspectionSummary(context: Pick<EodThreadContext, "parentEpicKey" | "parentEpicLabel">): string {
+  return getEpicSummaryFromLabel(context.parentEpicLabel, context.parentEpicKey) ?? getParentInspectionLabel(context);
+}
+
 function getParentTaskLabel(
   context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
 ): string {
   return context.parentTaskLabel?.trim() || context.parentTaskSummary.trim() || context.parentTaskKey;
+}
+
+function getParentTaskSummary(
+  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+): string {
+  return context.parentTaskSummary.trim() || getParentTaskLabel(context);
 }
 
 function buildEodThreadStartMessage(context: EodThreadContext) {
@@ -582,6 +635,45 @@ function buildEodCompletionMessage(input: {
             }
           ]
         : [])
+    ]
+  };
+}
+
+async function buildEodDataOperationsAlertMessage(input: {
+  context: EodThreadContext;
+  values: EodReportFormValues;
+  resolveUserGroupMention: (handle: string) => Promise<string | undefined>;
+}) {
+  if (input.values.numberOfScansCompleted < 80) {
+    return undefined;
+  }
+
+  const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_HANDLE);
+
+  if (!dataOperationsMention) {
+    return undefined;
+  }
+
+  const asset = escapeSlackText(getParentTaskSummary(input.context));
+  const inspection = escapeSlackText(getParentInspectionSummary(input.context));
+  const isCoverageComplete = input.values.numberOfScansCompleted >= 100;
+  const header = isCoverageComplete ? "*Inspection coverage complete*" : "*Inspection nearing completion*";
+  const body = isCoverageComplete
+    ? `${asset} for ${inspection} has reached 100% coverage and should be available for review soon. ${dataOperationsMention}`
+    : `${asset} for ${inspection} is nearing completion at ${input.values.numberOfScansCompleted}% coverage. ${dataOperationsMention}`;
+
+  return {
+    text: isCoverageComplete
+      ? `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} has reached 100% coverage.`
+      : `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} is nearing completion.`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: `${header}\n${body}`
+        }
+      }
     ]
   };
 }
@@ -1851,6 +1943,7 @@ export function registerSlackHandlers(app: App): void {
       const summary = buildEodReportSummary(context, validation.values);
       const details = formatEodReportDetails(context, validation.values);
       const resolveSlackUserMention = createSlackToJiraMentionResolver(client, logger);
+      const resolveSlackUserGroupMention = createSlackUserGroupMentionResolver(client, logger);
       const resolvedFullDayOverviewContent = await richTextToResolvedJiraDocNodes(fullDayOverviewValue, {
         resolveUserMention: resolveSlackUserMention
       });
@@ -1913,6 +2006,26 @@ export function registerSlackHandlers(app: App): void {
         thread_ts: context.threadTs,
         ...completionMessage
       });
+
+      const dataOperationsAlert = await buildEodDataOperationsAlertMessage({
+        context,
+        values: validation.values,
+        resolveUserGroupMention: resolveSlackUserGroupMention
+      });
+
+      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
+        logger.warn(
+          `Skipping EOD data operations alert for thread ${context.threadTs} because the Slack user group handle ${DATA_OPERATIONS_USERGROUP_HANDLE} could not be resolved.`
+        );
+      }
+
+      if (dataOperationsAlert) {
+        await client.chat.postMessage({
+          channel: context.channelId,
+          thread_ts: context.threadTs,
+          ...dataOperationsAlert
+        });
+      }
 
       await trySendDirectMessage(
         client,

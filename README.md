@@ -13,6 +13,7 @@ Production deployment is triggered from a semver release tag after the repositor
 - Creates `Bug`, `EOD Report`, or `Task` issues in Jira
 - Attaches the selected Epic as the parent
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
+- Posts a follow-up EOD thread alert to the data operations team when coverage reaches `80%` or higher
 - Optionally posts a confirmation message to a Slack test channel
 - Supports workflow-specific required fields, such as the `Reporting/Job Board` Bug requirements
 
@@ -113,6 +114,7 @@ Recommended bot scopes:
 - `channels:read`
 - `commands`
 - `im:write`
+- `usergroups:read`
 - `users:read`
 - `users:read.email`
 
@@ -171,6 +173,8 @@ For a local smoke test:
    - EOD flows do not show RB-only Bug fields
    - EHS Task flows show the structured intake instead of the generic details box
   - EOD flows create a thread in the same Slack channel where the workflow was launched
+  - EOD flows post a data-operations alert in the same thread once `sqft. % done` is `80` or higher
+  - a `100%` EOD flow uses the completion wording instead of the nearing-completion wording
   - If the source channel cannot be determined, the workflow stops with a clear error instead of posting into a fallback channel
    - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
 
@@ -183,6 +187,7 @@ Deployment checklist:
 - store Slack and Jira secrets outside the repo
 - keep Socket Mode enabled, or switch to HTTPS-based event delivery
 - reinstall the Slack app after any scope or manifest changes
+- reinstall the Slack app after adding `usergroups:read` so the app can resolve the data operations user group mention
 - reinstall the Slack app after adding `users:read` or `users:read.email` so Jira mention resolution can look up Slack users
 - document the workflow config and board/project mappings in `config/workflows.json`
 
