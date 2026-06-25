@@ -695,10 +695,12 @@ async function buildEodDataOperationsAlertMessage(input: {
   const asset = escapeSlackText(getParentTaskSummary(input.context));
   const inspection = escapeSlackText(getParentInspectionSummary(input.context));
   const isCoverageComplete = input.values.numberOfScansCompleted >= 100;
-  const header = isCoverageComplete ? "*Inspection coverage complete*" : "*Inspection nearing completion*";
+  const header = isCoverageComplete
+    ? ":rotating_light: *Inspection scope completed*"
+    : ":rotating_light: *Inspection nearing completion*";
   const body = isCoverageComplete
-    ? `${asset} for ${inspection} has reached *100% coverage* and should be available for review soon. ${dataOperationsMention}`
-    : `${asset} for ${inspection} is nearing completion at *${input.values.numberOfScansCompleted}% coverage*. ${dataOperationsMention}`;
+    ? `*Coverage:* \`100%\`\n${asset} for ${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
+    : `*Coverage:* \`${input.values.numberOfScansCompleted}%\`\n${asset} for ${inspection} is nearing completion. ${dataOperationsMention}`;
 
   return {
     text: isCoverageComplete
