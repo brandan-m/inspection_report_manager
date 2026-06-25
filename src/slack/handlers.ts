@@ -50,7 +50,17 @@ import {
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
 
-const DATA_OPERATIONS_USERGROUP_HANDLE = "data-operations";
+const DATA_OPERATIONS_USERGROUP_IDENTIFIERS = [
+  "data_team",
+  "@data_team",
+  "data-operations",
+  "data_operations",
+  "data-ops",
+  "data_ops",
+  "data-team",
+  "data operations",
+  "data team"
+] as const;
 
 function getSelectedOptionValue(
   action:
@@ -444,12 +454,15 @@ function createSlackToJiraMentionResolver(
 function createSlackUserGroupMentionResolver(
   client: App["client"],
   logger: Pick<Console, "warn">
-): (handle: string) => Promise<string | undefined> {
+): (identifiers: readonly string[]) => Promise<string | undefined> {
   const cache = new Map<string, Promise<string | undefined>>();
 
-  return (handle: string) => {
-    const normalizedHandle = handle.trim().replace(/^@/, "");
-    const cached = cache.get(normalizedHandle);
+  return (identifiers: readonly string[]) => {
+    const normalizedIdentifiers = identifiers
+      .map((identifier) => identifier.trim().replace(/^@/, ""))
+      .filter((identifier) => identifier.length > 0);
+    const cacheKey = normalizedIdentifiers.join("|");
+    const cached = cache.get(cacheKey);
 
     if (cached) {
       return cached;
@@ -461,23 +474,48 @@ function createSlackUserGroupMentionResolver(
           include_disabled: false,
           include_users: false
         });
-        const userGroup = response.usergroups?.find((group) => group.handle === normalizedHandle);
+        const exactHandles = new Set(normalizedIdentifiers.map((identifier) => identifier.toLowerCase()));
+        const normalizedCandidates = new Set(
+          normalizedIdentifiers.map((identifier) => identifier.toLowerCase().replace(/[^a-z0-9]/g, ""))
+        );
+        const userGroup = response.usergroups?.find((group) => {
+          const handle = group.handle?.trim() ?? "";
+          const normalizedHandle = handle.toLowerCase();
+          const collapsedHandle = normalizedHandle.replace(/[^a-z0-9]/g, "");
+          const groupName = typeof group.name === "string" ? group.name.trim().toLowerCase() : "";
+          const collapsedName = groupName.replace(/[^a-z0-9]/g, "");
+
+          return (
+            exactHandles.has(normalizedHandle) ||
+            normalizedCandidates.has(collapsedHandle) ||
+            normalizedCandidates.has(collapsedName)
+          );
+        });
 
         if (!userGroup?.id) {
-          logger.warn(`Could not find Slack user group with handle ${normalizedHandle}.`);
+          const similarHandles = (response.usergroups ?? [])
+            .map((group) => group.handle?.trim())
+            .filter((handle): handle is string => Boolean(handle))
+            .filter((handle) => handle.toLowerCase().includes("data"))
+            .slice(0, 5);
+          logger.warn(
+            `Could not find Slack user group for identifiers ${normalizedIdentifiers.join(", ")}.${
+              similarHandles.length > 0 ? ` Similar handles: ${similarHandles.join(", ")}.` : ""
+            }`
+          );
           return undefined;
         }
 
         return `<!subteam^${userGroup.id}>`;
       } catch (error) {
         logger.warn(
-          `Could not resolve Slack user group ${normalizedHandle}. ${formatSlackApiErrorDetails(error)}`
+          `Could not resolve Slack user group identifiers ${normalizedIdentifiers.join(", ")}. ${formatSlackApiErrorDetails(error)}`
         );
         return undefined;
       }
     })();
 
-    cache.set(normalizedHandle, pending);
+    cache.set(cacheKey, pending);
     return pending;
   };
 }
@@ -642,13 +680,13 @@ function buildEodCompletionMessage(input: {
 async function buildEodDataOperationsAlertMessage(input: {
   context: EodThreadContext;
   values: EodReportFormValues;
-  resolveUserGroupMention: (handle: string) => Promise<string | undefined>;
+  resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
   if (input.values.numberOfScansCompleted < 80) {
     return undefined;
   }
 
-  const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_HANDLE);
+  const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_IDENTIFIERS);
 
   if (!dataOperationsMention) {
     return undefined;
@@ -2015,7 +2053,7 @@ export function registerSlackHandlers(app: App): void {
 
       if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
         logger.warn(
-          `Skipping EOD data operations alert for thread ${context.threadTs} because the Slack user group handle ${DATA_OPERATIONS_USERGROUP_HANDLE} could not be resolved.`
+          `Skipping EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
         );
       }
 
