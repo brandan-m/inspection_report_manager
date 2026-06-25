@@ -697,8 +697,8 @@ async function buildEodDataOperationsAlertMessage(input: {
   const isCoverageComplete = input.values.numberOfScansCompleted >= 100;
   const header = isCoverageComplete ? "*Inspection coverage complete*" : "*Inspection nearing completion*";
   const body = isCoverageComplete
-    ? `${asset} for ${inspection} has reached 100% coverage and should be available for review soon. ${dataOperationsMention}`
-    : `${asset} for ${inspection} is nearing completion at ${input.values.numberOfScansCompleted}% coverage. ${dataOperationsMention}`;
+    ? `${asset} for ${inspection} has reached *100% coverage* and should be available for review soon. ${dataOperationsMention}`
+    : `${asset} for ${inspection} is nearing completion at *${input.values.numberOfScansCompleted}% coverage*. ${dataOperationsMention}`;
 
   return {
     text: isCoverageComplete
@@ -1013,6 +1013,8 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodScanningTimeBlock] = "Total Scanning Time is required.";
   } else if (Number.isNaN(Number(scanningTimeValue))) {
     errors[CALLBACKS.eodScanningTimeBlock] = "Enter a valid number.";
+  } else if (Number(scanningTimeValue) < 0) {
+    errors[CALLBACKS.eodScanningTimeBlock] = "Enter a number greater than or equal to 0.";
   }
 
   if (Object.keys(errors).length > 0) {
