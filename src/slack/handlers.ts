@@ -158,9 +158,22 @@ function getSelectedFileIds(
 ): string[] {
   const action = stateValues?.[blockId]?.[actionId] as
     | {
+        files?: Array<{
+          id?: string;
+        }>;
         selected_files?: string[];
       }
     | undefined;
+
+  const uploadedFileIds = Array.isArray(action?.files)
+    ? action.files
+        .map((file) => file?.id)
+        .filter((fileId): fileId is string => typeof fileId === "string" && fileId.length > 0)
+    : [];
+
+  if (uploadedFileIds.length > 0) {
+    return uploadedFileIds;
+  }
 
   if (!Array.isArray(action?.selected_files)) {
     return [];
