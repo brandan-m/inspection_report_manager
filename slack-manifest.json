@@ -33,6 +33,8 @@
         "channels:join",
         "channels:read",
         "commands",
+        "files:read",
+        "files:write",
         "im:write",
         "usergroups:read",
         "users:read",

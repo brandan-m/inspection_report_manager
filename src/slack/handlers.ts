@@ -11,6 +11,7 @@ import {
   getEhsTextInputKeys,
   type EhsModalStateValues
 } from "../ehs/form.js";
+import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
 import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
@@ -40,6 +41,7 @@ import {
   shouldCollectEodInThread,
   usesEhsSpecificFields
 } from "./modal.js";
+import { downloadSlackFile, shareSlackFile } from "./attachments.js";
 import {
   type SlackRichTextBlock,
   richTextToJiraDocNodes,
@@ -147,6 +149,24 @@ function getDateValue(
   }
 
   return undefined;
+}
+
+function getSelectedFileIds(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string[] {
+  const action = stateValues?.[blockId]?.[actionId] as
+    | {
+        selected_files?: string[];
+      }
+    | undefined;
+
+  if (!Array.isArray(action?.selected_files)) {
+    return [];
+  }
+
+  return action.selected_files.filter((fileId): fileId is string => typeof fileId === "string");
 }
 
 function parseModalMetadata(view?: { private_metadata?: string }): ModalMetadata | undefined {
@@ -906,6 +926,93 @@ async function trySendDirectMessage(
   }
 }
 
+async function syncAttachmentsForIssue(
+  client: App["client"],
+  input: {
+    fileIds: string[];
+    issueKey: string;
+    slackChannelId: string;
+    slackThreadTs?: string;
+  },
+  logger: Pick<Console, "warn">
+) {
+  if (input.fileIds.length === 0) {
+    return {
+      attempted: 0,
+      downloadFailures: 0,
+      jiraFailures: 0,
+      slackFailures: 0
+    };
+  }
+
+  const downloadResults = await Promise.allSettled(
+    input.fileIds.map((fileId) => downloadSlackFile(client, fileId))
+  );
+  const files = downloadResults
+    .filter(
+      (result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof downloadSlackFile>>> =>
+        result.status === "fulfilled"
+    )
+    .map((result) => result.value);
+  const downloadFailures = downloadResults.length - files.length;
+  let jiraFailures = 0;
+  let slackFailures = 0;
+
+  for (const result of downloadResults) {
+    if (result.status === "rejected") {
+      logger.warn(
+        `Could not load a Slack attachment for issue ${input.issueKey}: ${
+          result.reason instanceof Error ? result.reason.message : String(result.reason)
+        }`
+      );
+    }
+  }
+
+  for (const [index, file] of files.entries()) {
+    const [jiraResult, slackResult] = await Promise.allSettled([
+      uploadAttachmentToIssue({
+        issueKey: input.issueKey,
+        filename: file.filename,
+        contentType: file.contentType,
+        data: file.data
+      }),
+      shareSlackFile({
+        client,
+        file,
+        channelId: input.slackChannelId,
+        threadTs: input.slackThreadTs,
+        initialComment:
+          index === 0 ? `Attachments for ${input.issueKey}: ${buildJiraIssueUrl(input.issueKey)}` : undefined
+      })
+    ]);
+
+    if (jiraResult.status === "rejected") {
+      jiraFailures += 1;
+      logger.warn(
+        `Could not upload attachment ${file.filename} to Jira issue ${input.issueKey}: ${
+          jiraResult.reason instanceof Error ? jiraResult.reason.message : String(jiraResult.reason)
+        }`
+      );
+    }
+
+    if (slackResult.status === "rejected") {
+      slackFailures += 1;
+      logger.warn(
+        `Could not share attachment ${file.filename} in Slack for issue ${input.issueKey}: ${
+          slackResult.reason instanceof Error ? slackResult.reason.message : String(slackResult.reason)
+        }`
+      );
+    }
+  }
+
+  return {
+    attempted: input.fileIds.length,
+    downloadFailures,
+    jiraFailures,
+    slackFailures
+  };
+}
+
 async function createEodThread(
   client: App["client"],
   context: Omit<EodThreadContext, "threadTs">
@@ -1618,6 +1725,11 @@ export function registerSlackHandlers(app: App): void {
     const downtimeValue =
       getPlainTextValue(values, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction) ?? "";
     const details = getPlainTextValue(values, CALLBACKS.detailsBlock, CALLBACKS.detailsAction) ?? "";
+    const attachmentFileIds = getSelectedFileIds(
+      values,
+      CALLBACKS.bugAttachmentsBlock,
+      CALLBACKS.bugAttachmentsAction
+    );
 
     const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
     const isEod = selectedIssueType === "EOD Report";
@@ -1914,6 +2026,58 @@ export function registerSlackHandlers(app: App): void {
         confirmationMessage.blocks,
         logger
       );
+
+      if (channelId && attachmentFileIds.length > 0) {
+        try {
+          const attachmentSync = await syncAttachmentsForIssue(
+            client,
+            {
+              fileIds: attachmentFileIds,
+              issueKey: issue.key,
+              slackChannelId: channelId
+            },
+            logger
+          );
+
+          logger.info(
+            `Synced attachments for Jira issue ${issue.key}: ${JSON.stringify({
+              attempted: attachmentSync.attempted,
+              downloadFailures: attachmentSync.downloadFailures,
+              jiraFailures: attachmentSync.jiraFailures,
+              slackFailures: attachmentSync.slackFailures
+            })}`
+          );
+
+          if (
+            attachmentSync.downloadFailures > 0 ||
+            attachmentSync.jiraFailures > 0 ||
+            attachmentSync.slackFailures > 0
+          ) {
+            await trySendDirectMessage(
+              client,
+              body.user.id,
+              `Jira issue ${issue.key} was created, but ${String(
+                attachmentSync.downloadFailures + attachmentSync.jiraFailures + attachmentSync.slackFailures
+              )} attachment copy step(s) failed. Please review the Slack post and Jira ticket attachments.`,
+              undefined,
+              logger
+            );
+          }
+        } catch (error) {
+          logger.warn(
+            `Unexpected attachment sync failure for Jira issue ${issue.key}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          await trySendDirectMessage(
+            client,
+            body.user.id,
+            `Jira issue ${issue.key} was created, but the attachment sync did not finish. Please review the Slack post and Jira ticket attachments.`,
+            undefined,
+            logger
+          );
+        }
+      }
     } catch (error) {
       logger.error(
         `Could not create Jira issue for workflow ${workflow.key} issueType ${selectedIssueType}: ${
@@ -1936,6 +2100,11 @@ export function registerSlackHandlers(app: App): void {
       view.state.values,
       CALLBACKS.eodFullDayOverviewBlock,
       CALLBACKS.eodFullDayOverviewAction
+    );
+    const attachmentFileIds = getSelectedFileIds(
+      view.state.values,
+      CALLBACKS.eodAttachmentsBlock,
+      CALLBACKS.eodAttachmentsAction
     );
 
     try {
@@ -2048,6 +2217,57 @@ export function registerSlackHandlers(app: App): void {
         thread_ts: context.threadTs,
         ...completionMessage
       });
+
+      if (attachmentFileIds.length > 0) {
+        try {
+          const attachmentSync = await syncAttachmentsForIssue(
+            client,
+            {
+              fileIds: attachmentFileIds,
+              issueKey: issue.key,
+              slackChannelId: context.channelId,
+              slackThreadTs: context.threadTs
+            },
+            logger
+          );
+
+          logger.info(
+            `Synced EOD attachments for Jira issue ${issue.key}: ${JSON.stringify({
+              attempted: attachmentSync.attempted,
+              downloadFailures: attachmentSync.downloadFailures,
+              jiraFailures: attachmentSync.jiraFailures,
+              slackFailures: attachmentSync.slackFailures
+            })}`
+          );
+
+          if (
+            attachmentSync.downloadFailures > 0 ||
+            attachmentSync.jiraFailures > 0 ||
+            attachmentSync.slackFailures > 0
+          ) {
+            await client.chat.postMessage({
+              channel: context.channelId,
+              thread_ts: context.threadTs,
+              text:
+                `Jira issue ${issue.key} was created, but ${String(
+                  attachmentSync.downloadFailures + attachmentSync.jiraFailures + attachmentSync.slackFailures
+                )} attachment copy step(s) failed. Please review the Slack thread and Jira ticket attachments.`
+            });
+          }
+        } catch (error) {
+          logger.warn(
+            `Unexpected EOD attachment sync failure for Jira issue ${issue.key}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          await client.chat.postMessage({
+            channel: context.channelId,
+            thread_ts: context.threadTs,
+            text:
+              `Jira issue ${issue.key} was created, but the attachment sync did not finish. Please review the Slack thread and Jira ticket attachments.`
+          });
+        }
+      }
 
       const dataOperationsAlert = await buildEodDataOperationsAlertMessage({
         context,

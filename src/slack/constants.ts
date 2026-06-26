@@ -23,6 +23,8 @@ export const CALLBACKS = {
   summaryAction: "summary_input",
   detailsBlock: "details_block",
   detailsAction: "details_input",
+  bugAttachmentsBlock: "bug_attachments_block",
+  bugAttachmentsAction: "bug_attachments_input",
   eodDateBlock: "eod_date_block",
   eodDateAction: "eod_date_input",
   eodAssetTypeBlock: "eod_asset_type_block",
@@ -54,5 +56,7 @@ export const CALLBACKS = {
   eodCrewOffSiteBlock: "eod_crew_off_site_block",
   eodCrewOffSiteAction: "eod_crew_off_site_input",
   eodNotesBlock: "eod_notes_block",
-  eodNotesAction: "eod_notes_input"
+  eodNotesAction: "eod_notes_input",
+  eodAttachmentsBlock: "eod_attachments_block",
+  eodAttachmentsAction: "eod_attachments_input"
 } as const;

@@ -12,6 +12,7 @@ Production deployment is triggered from a semver release tag after the repositor
 - Searches Jira Epics live for the selected workflow
 - Creates `Bug`, `EOD Report`, or `Task` issues in Jira
 - Attaches the selected Epic as the parent
+- Copies optional Slack-uploaded screenshots and documents into both Slack follow-ups and the created Jira ticket
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
 - Posts a follow-up EOD thread alert to the data operations team when coverage reaches `80%` or higher
 - Optionally posts a confirmation message to a Slack test channel
@@ -113,6 +114,8 @@ Recommended bot scopes:
 - `channels:join`
 - `channels:read`
 - `commands`
+- `files:read`
+- `files:write`
 - `im:write`
 - `usergroups:read`
 - `users:read`
@@ -189,6 +192,7 @@ Deployment checklist:
 - reinstall the Slack app after any scope or manifest changes
 - reinstall the Slack app after adding `usergroups:read` so the app can resolve the data operations user group mention
 - reinstall the Slack app after adding `users:read` or `users:read.email` so Jira mention resolution can look up Slack users
+- reinstall the Slack app after adding `files:read` or `files:write` so modal uploads can be copied into Slack and Jira attachments
 - document the workflow config and board/project mappings in `config/workflows.json`
 
 ### Docker-Based Deployment
