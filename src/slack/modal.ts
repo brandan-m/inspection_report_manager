@@ -124,6 +124,34 @@ function plainTextInputBlock(
   };
 }
 
+function attachmentHelpBlock(blockId: string, text: string): KnownBlock {
+  return {
+    type: "section",
+    block_id: blockId,
+    text: {
+      type: "mrkdwn",
+      text
+    }
+  };
+}
+
+function attachmentInputBlock(blockId: string, actionId: string, label: string): KnownBlock {
+  return {
+    type: "input",
+    block_id: blockId,
+    optional: true,
+    element: {
+      type: "file_input",
+      action_id: actionId,
+      max_files: 10
+    },
+    label: {
+      type: "plain_text",
+      text: label
+    }
+  } as KnownBlock;
+}
+
 function jiraText(text: string, marks?: JiraTextNode["marks"]): JiraTextNode {
   return {
     type: "text",
@@ -415,6 +443,15 @@ export function buildCreateIssueModal(
         "Add details for the Jira issue",
         state.details,
         true
+      ),
+      attachmentHelpBlock(
+        "bug_attachments_help",
+        "*Attachments (optional)*\nUpload screenshots, documents, or other files to include with the Slack confirmation and the Jira issue. Add files after you finish changing the form because Slack clears uploads when the modal refreshes."
+      ),
+      attachmentInputBlock(
+        CALLBACKS.bugAttachmentsBlock,
+        CALLBACKS.bugAttachmentsAction,
+        "Attachments (optional)"
       )
     );
   }
@@ -587,6 +624,15 @@ export function buildEodReportModal(context: EodThreadContext) {
         undefined,
         true,
         true
+      ),
+      attachmentHelpBlock(
+        "eod_attachments_help",
+        "*Attachments (optional)*\nUpload photos, scans, or supporting documents to include in this Slack thread and on the Jira issue."
+      ),
+      attachmentInputBlock(
+        CALLBACKS.eodAttachmentsBlock,
+        CALLBACKS.eodAttachmentsAction,
+        "Attachments (optional)"
       )
     ]
   };

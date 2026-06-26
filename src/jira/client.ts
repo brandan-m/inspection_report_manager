@@ -6,14 +6,18 @@ function buildAuthHeader(): string {
 }
 
 async function jiraFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+
+  headers.set("Authorization", buildAuthHeader());
+  headers.set("Accept", "application/json");
+
+  if (!(init?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
   const response = await fetch(`${env.JIRA_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      Authorization: buildAuthHeader(),
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    }
+    headers
   });
 
   if (!response.ok) {
