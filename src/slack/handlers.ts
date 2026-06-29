@@ -639,12 +639,14 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const reportStatus = context.reportIssueKey
     ? `:white_check_mark: ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`
     : ":hourglass_flowing_sand: Pending";
+  const coverageStatus =
+    typeof context.lastCoveragePercent === "number" ? `\`${String(context.lastCoveragePercent)}%\`` : "Pending";
   const closeoutTimestamp = formatSlackDateTime(context.closedOutAt);
   const statusLines = [
     `*Thread Status:* ${status === "closed" ? ":white_check_mark: Closed Out" : ":large_green_circle: Active"}`,
-    `*Slack Closeout:* ${status === "closed" ? ":white_check_mark: Closed in Slack" : ":speech_balloon: Open"}`,
     `*Scanning Scope:* ${status === "closed" ? ":white_check_mark: Completed" : ":hourglass_flowing_sand: In Progress"}`,
-    `*EOD Report:* ${reportStatus}`
+    `*Last % Coverage Update:* ${coverageStatus}`,
+    `*Last EOD Report:* ${reportStatus}`
   ];
 
   if (status === "closed") {
@@ -2334,7 +2336,8 @@ export function registerSlackHandlers(app: App): void {
 
       const updatedThreadContext: EodThreadContext = {
         ...context,
-        reportIssueKey: issue.key
+        reportIssueKey: issue.key,
+        lastCoveragePercent: validation.values.numberOfScansCompleted
       };
 
       await updateEodThreadRootMessage(client, updatedThreadContext);

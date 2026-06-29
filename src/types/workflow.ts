@@ -158,6 +158,7 @@ export interface EodThreadContext {
   threadTs: string;
   status?: EodThreadLifecycleStatus;
   reportIssueKey?: string;
+  lastCoveragePercent?: number;
   closedOutByUserId?: string;
   closedOutAt?: string;
 }
