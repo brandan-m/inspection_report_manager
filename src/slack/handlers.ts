@@ -797,27 +797,7 @@ async function buildEodDataOperationsAlertMessage(input: {
   resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
   if (usesTubeCountForEod(input.context)) {
-    const asset = escapeSlackText(getParentTaskSummary(input.context));
-    const inspection = escapeSlackText(getParentInspectionSummary(input.context));
-    const tubesScanned = formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted);
-
-    return {
-      text: `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} reported ${String(
-        input.values.numberOfScansCompleted
-      )} tubes scanned.`,
-      blocks: [
-        {
-          type: "section" as const,
-          text: {
-            type: "mrkdwn" as const,
-            text:
-              `:rotating_light: *Boiler scan update*\n` +
-              `*# of Tubes Scanned:* ${tubesScanned}\n` +
-              `${asset} for ${inspection} reported a new boiler scan count.`
-          }
-        }
-      ]
-    };
+    return undefined;
   }
 
   if (input.values.numberOfScansCompleted < 80) {
@@ -2442,7 +2422,7 @@ export function registerSlackHandlers(app: App): void {
         resolveUserGroupMention: resolveSlackUserGroupMention
       });
 
-      if ((usesTubeCountForEod(context) || validation.values.numberOfScansCompleted >= 80) && !dataOperationsAlert) {
+      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
         logger.warn(
           `Skipping EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
         );
