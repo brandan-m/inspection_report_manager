@@ -613,24 +613,75 @@ function getParentTaskSummary(
   return context.parentTaskSummary.trim() || getParentTaskLabel(context);
 }
 
+function getEodThreadLifecycleStatus(context: Pick<EodThreadContext, "status">): "active" | "closed" {
+  return context.status === "closed" ? "closed" : "active";
+}
+
+function formatSlackDateTime(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  const epochSeconds = Math.floor(date.getTime() / 1000);
+
+  if (Number.isNaN(epochSeconds)) {
+    return escapeSlackText(value);
+  }
+
+  return `<!date^${String(epochSeconds)}^{date_short_pretty} at {time}|${escapeSlackText(value)}>`;
+}
+
 function buildEodThreadStartMessage(context: EodThreadContext) {
+  const status = getEodThreadLifecycleStatus(context);
   const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
   const assetTask = buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context));
+  const reportStatus = context.reportIssueKey
+    ? `:white_check_mark: ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`
+    : ":hourglass_flowing_sand: Pending";
+  const closeoutTimestamp = formatSlackDateTime(context.closedOutAt);
+  const statusLines = [
+    `*Thread Status:* ${status === "closed" ? ":white_check_mark: Closed Out" : ":large_green_circle: Active"}`,
+    `*Slack Closeout:* ${status === "closed" ? ":white_check_mark: Closed in Slack" : ":speech_balloon: Open"}`,
+    `*Scanning Scope:* ${status === "closed" ? ":white_check_mark: Completed" : ":hourglass_flowing_sand: In Progress"}`,
+    `*EOD Report:* ${reportStatus}`
+  ];
+
+  if (status === "closed") {
+    statusLines.push(
+      `*Closed Out By:* ${context.closedOutByUserId ? `<@${context.closedOutByUserId}>` : "Operator not recorded"}`
+    );
+  }
+
+  if (status === "closed" && closeoutTimestamp) {
+    statusLines.push(`*Closed Out At:* ${closeoutTimestamp}`);
+  }
+
   const text =
-    `*EOD Intake :thread:*\n` +
+    `*EOD Intake ${status === "closed" ? ":white_check_mark:" : ":thread:"}*\n` +
     `*Parent Inspection:* ${parentInspection}\n` +
     `*Asset:* ${assetTask}\n` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
     `*Created by:* <@${context.requesterId}>`;
 
   return {
-    text: `EOD intake started for ${context.parentEpicKey}.`,
+    text:
+      status === "closed"
+        ? `EOD intake closed out for ${context.parentEpicKey}.`
+        : `EOD intake started for ${context.parentEpicKey}.`,
     blocks: [
       {
         type: "section" as const,
         text: {
           type: "mrkdwn" as const,
           text
+        }
+      },
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: statusLines.join("\n")
         }
       },
       {
@@ -643,13 +694,33 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
               type: "plain_text" as const,
               text: "Generate EOD Report"
             },
-            style: "danger" as const,
+            value: JSON.stringify(context)
+          },
+          {
+            type: "button" as const,
+            action_id: CALLBACKS.eodCloseoutButton,
+            text: {
+              type: "plain_text" as const,
+              text: status === "closed" ? "Reopen Thread" : "Mark Closed Out"
+            },
+            style: status === "closed" ? "danger" : "primary",
             value: JSON.stringify(context)
           }
         ]
       }
     ]
   };
+}
+
+async function updateEodThreadRootMessage(client: App["client"], context: EodThreadContext) {
+  const message = buildEodThreadStartMessage(context);
+
+  await client.chat.update({
+    channel: context.channelId,
+    ts: context.threadTs,
+    text: message.text,
+    blocks: message.blocks
+  });
 }
 
 function buildEodCompletionMessage(input: {
@@ -1042,16 +1113,10 @@ async function createEodThread(
 
   const threadContext: EodThreadContext = {
     ...context,
-    threadTs: starter.ts
+    threadTs: starter.ts,
+    status: getEodThreadLifecycleStatus(context)
   };
-  const starterMessage = buildEodThreadStartMessage(threadContext);
-
-  await client.chat.update({
-    channel: context.channelId,
-    ts: starter.ts,
-    text: starterMessage.text,
-    blocks: starterMessage.blocks
-  });
+  await updateEodThreadRootMessage(client, threadContext);
 
   return threadContext;
 }
@@ -1566,6 +1631,48 @@ export function registerSlackHandlers(app: App): void {
     });
 
     logger.info(`Opened EOD intake modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.eodCloseoutButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("EOD closeout action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("EOD closeout action did not include thread context.");
+      return;
+    }
+
+    try {
+      const context = decodeEodThreadContext(contextValue);
+      const isClosed = getEodThreadLifecycleStatus(context) === "closed";
+      const updatedContext: EodThreadContext = isClosed
+        ? {
+            ...context,
+            status: "active",
+            closedOutByUserId: undefined,
+            closedOutAt: undefined
+          }
+        : {
+            ...context,
+            status: "closed",
+            closedOutByUserId: body.user.id,
+            closedOutAt: new Date().toISOString()
+          };
+
+      await updateEodThreadRootMessage(client, updatedContext);
+      logger.info(
+        `${isClosed ? "Reopened" : "Closed out"} EOD intake thread ${updatedContext.threadTs} for ${updatedContext.parentEpicKey}`
+      );
+    } catch (error) {
+      logger.error(`Failed to toggle EOD thread closeout state. ${formatSlackApiErrorDetails(error)}`, error);
+    }
   });
 
   app.options(CALLBACKS.epicAction, async ({ ack, body, logger }) => {
@@ -2224,6 +2331,13 @@ export function registerSlackHandlers(app: App): void {
         context,
         values: validation.values
       });
+
+      const updatedThreadContext: EodThreadContext = {
+        ...context,
+        reportIssueKey: issue.key
+      };
+
+      await updateEodThreadRootMessage(client, updatedThreadContext);
 
       await client.chat.postMessage({
         channel: context.channelId,

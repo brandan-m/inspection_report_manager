@@ -9,6 +9,7 @@ import {
 import type {
   BlockerType,
   EodAssetType,
+  EodThreadLifecycleStatus,
   EhsFormValues,
   JiraDocNode,
   JiraTextNode,
@@ -485,6 +486,17 @@ export function encodeEodThreadContext(context: EodThreadContext): string {
 
 export function decodeEodThreadContext(value: string): EodThreadContext {
   const parsed = JSON.parse(value) as Partial<EodThreadContext>;
+  const status: EodThreadLifecycleStatus = parsed.status === "closed" ? "closed" : "active";
+  const reportIssueKey =
+    typeof parsed.reportIssueKey === "string" && parsed.reportIssueKey.trim().length > 0
+      ? parsed.reportIssueKey
+      : undefined;
+  const closedOutByUserId =
+    typeof parsed.closedOutByUserId === "string" && parsed.closedOutByUserId.trim().length > 0
+      ? parsed.closedOutByUserId
+      : undefined;
+  const closedOutAt =
+    typeof parsed.closedOutAt === "string" && parsed.closedOutAt.trim().length > 0 ? parsed.closedOutAt : undefined;
 
   if (
     !parsed.workflowKey ||
@@ -509,7 +521,11 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     assetType: parsed.assetType,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
-    threadTs: parsed.threadTs
+    threadTs: parsed.threadTs,
+    status,
+    reportIssueKey,
+    closedOutByUserId,
+    closedOutAt
   };
 }
 

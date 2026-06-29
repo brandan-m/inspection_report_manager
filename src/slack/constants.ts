@@ -4,6 +4,7 @@ export const CALLBACKS = {
   channelOpenButton: "open_create_gecko_report_from_channel",
   createIssueView: "create_gecko_report_view",
   eodStartButton: "start_eod_report_collection",
+  eodCloseoutButton: "toggle_eod_thread_closeout",
   eodReportView: "eod_report_view",
   channelBlock: "channel_block",
   channelAction: "channel_select",

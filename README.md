@@ -172,14 +172,16 @@ For a local smoke test:
    - `API Data Delivery` only shows APIDD Epics
    - `Reporting/Job Board` only shows RB Epics
    - `EHS Jobs` only shows EHSJOB Epics
-   - RB Bug flows show the extra required fields
-   - EOD flows do not show RB-only Bug fields
-   - EHS Task flows show the structured intake instead of the generic details box
+  - RB Bug flows show the extra required fields
+  - EOD flows do not show RB-only Bug fields
+  - EHS Task flows show the structured intake instead of the generic details box
   - EOD flows create a thread in the same Slack channel where the workflow was launched
+  - The root EOD thread message shows whether the thread is still active or has been manually closed out
   - EOD flows post a data-operations alert in the same thread once `sqft. % done` is `80` or higher
   - a `100%` EOD flow uses the completion wording instead of the nearing-completion wording
   - If the source channel cannot be determined, the workflow stops with a clear error instead of posting into a fallback channel
-   - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
+  - The root EOD thread message includes a manual closeout toggle so operators can mark scanning scope complete and visually close the thread in Slack
+  - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
 
 ## Deployment Notes
 
