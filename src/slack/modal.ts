@@ -491,6 +491,10 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     typeof parsed.reportIssueKey === "string" && parsed.reportIssueKey.trim().length > 0
       ? parsed.reportIssueKey
       : undefined;
+  const lastCoveragePercent =
+    typeof parsed.lastCoveragePercent === "number" && Number.isFinite(parsed.lastCoveragePercent)
+      ? parsed.lastCoveragePercent
+      : undefined;
   const closedOutByUserId =
     typeof parsed.closedOutByUserId === "string" && parsed.closedOutByUserId.trim().length > 0
       ? parsed.closedOutByUserId
@@ -524,6 +528,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     threadTs: parsed.threadTs,
     status,
     reportIssueKey,
+    lastCoveragePercent,
     closedOutByUserId,
     closedOutAt
   };
