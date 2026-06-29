@@ -16,6 +16,7 @@ export type EodAssetType =
   | "Spheres"
   | "Towers";
 export type EodYesNo = "Yes" | "No";
+export type EodThreadLifecycleStatus = "active" | "closed";
 
 export interface WorkflowDefinition {
   key: string;
@@ -155,6 +156,10 @@ export interface EodThreadContext {
   requesterId: string;
   channelId: string;
   threadTs: string;
+  status?: EodThreadLifecycleStatus;
+  reportIssueKey?: string;
+  closedOutByUserId?: string;
+  closedOutAt?: string;
 }
 
 export interface EhsFormValues {
