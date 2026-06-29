@@ -33,7 +33,11 @@ import {
   buildEodReportModal,
   buildEhsDescriptionContent,
   decodeEodThreadContext,
+  formatEodProgressCodeValue,
+  formatEodProgressValue,
   formatEodReportDetails,
+  getEodProgressFieldLabel,
+  usesTubeCountForEod,
   formatEhsDetails,
   type ModalMetadata,
   requiresBugSpecificFields,
@@ -636,16 +640,19 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const status = getEodThreadLifecycleStatus(context);
   const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
   const assetTask = buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context));
+  const progressFieldLabel = usesTubeCountForEod(context) ? "Last # of Tubes Scanned" : "Last % Coverage Update";
   const reportStatus = context.reportIssueKey
     ? `:white_check_mark: ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`
     : ":hourglass_flowing_sand: Pending";
   const coverageStatus =
-    typeof context.lastCoveragePercent === "number" ? `\`${String(context.lastCoveragePercent)}%\`` : "Pending";
+    typeof context.lastCoveragePercent === "number"
+      ? formatEodProgressCodeValue(context, context.lastCoveragePercent)
+      : "Pending";
   const closeoutTimestamp = formatSlackDateTime(context.closedOutAt);
   const statusLines = [
     `*Thread Status:* ${status === "closed" ? ":white_check_mark: Closed Out" : ":large_green_circle: Active"}`,
     `*Scanning Scope:* ${status === "closed" ? ":white_check_mark: Completed" : ":hourglass_flowing_sand: In Progress"}`,
-    `*Last % Coverage Update:* ${coverageStatus}`,
+    `*${progressFieldLabel}:* ${coverageStatus}`,
     `*Last EOD Report:* ${reportStatus}`
   ];
 
@@ -738,6 +745,7 @@ function buildEodCompletionMessage(input: {
     getParentInspectionLabel(input.context)
   );
   const assetTask = buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context));
+  const progressFieldLabel = getEodProgressFieldLabel(input.context);
   const headerLines = [
     `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
@@ -747,7 +755,7 @@ function buildEodCompletionMessage(input: {
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
-    `*sqft. % done:* ${String(input.values.numberOfScansCompleted)}%`,
+    `*${progressFieldLabel}:* ${escapeSlackText(formatEodProgressValue(input.context, input.values.numberOfScansCompleted))}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
 
@@ -788,6 +796,36 @@ async function buildEodDataOperationsAlertMessage(input: {
   values: EodReportFormValues;
   resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
+  if (usesTubeCountForEod(input.context)) {
+    const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_IDENTIFIERS);
+
+    if (!dataOperationsMention) {
+      return undefined;
+    }
+
+    const asset = escapeSlackText(getParentTaskSummary(input.context));
+    const inspection = escapeSlackText(getParentInspectionSummary(input.context));
+    const tubesScanned = formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted);
+
+    return {
+      text: `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} reported ${String(
+        input.values.numberOfScansCompleted
+      )} tubes scanned.`,
+      blocks: [
+        {
+          type: "section" as const,
+          text: {
+            type: "mrkdwn" as const,
+            text:
+              `:rotating_light: *Boiler scan update*\n` +
+              `*# of Tubes Scanned:* ${tubesScanned}\n` +
+              `${asset} for ${inspection} reported a new boiler scan count. ${dataOperationsMention}`
+          }
+        }
+      ]
+    };
+  }
+
   if (input.values.numberOfScansCompleted < 80) {
     return undefined;
   }
@@ -1153,7 +1191,7 @@ function summarizeCreateIssueSubmission(input: {
   });
 }
 
-function validateEodForm(values: ModalState | undefined) {
+function validateEodForm(values: ModalState | undefined, context: Pick<EodThreadContext, "assetType">) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
   const fullDayOverviewValue = getRichTextValue(
@@ -1190,12 +1228,17 @@ function validateEodForm(values: ModalState | undefined) {
     errors[CALLBACKS.eodJsaSubmittedBlock] = "Choose whether JSA was submitted.";
   }
 
+  const progressFieldLabel = getEodProgressFieldLabel(context);
+  const usesTubeCount = usesTubeCountForEod(context);
+
   if (!scansCompletedValue) {
-    errors[CALLBACKS.eodScansCompletedBlock] = "sqft. % done is required.";
+    errors[CALLBACKS.eodScansCompletedBlock] = `${progressFieldLabel} is required.`;
   } else if (Number.isNaN(Number(scansCompletedValue))) {
     errors[CALLBACKS.eodScansCompletedBlock] = "Enter a valid number.";
-  } else if (Number(scansCompletedValue) < 0 || Number(scansCompletedValue) > 100) {
-    errors[CALLBACKS.eodScansCompletedBlock] = "Enter a number from 0 to 100.";
+  } else if (Number(scansCompletedValue) < 0 || (!usesTubeCount && Number(scansCompletedValue) > 100)) {
+    errors[CALLBACKS.eodScansCompletedBlock] = usesTubeCount
+      ? "Enter a number greater than or equal to 0."
+      : "Enter a number from 0 to 100.";
   }
 
   if (!scanningTimeValue) {
@@ -2242,7 +2285,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    const validation = validateEodForm(view.state.values);
+    const validation = validateEodForm(view.state.values, context);
 
     if (!validation.success) {
       logger.info(
@@ -2405,7 +2448,7 @@ export function registerSlackHandlers(app: App): void {
         resolveUserGroupMention: resolveSlackUserGroupMention
       });
 
-      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
+      if ((usesTubeCountForEod(context) || validation.values.numberOfScansCompleted >= 80) && !dataOperationsAlert) {
         logger.warn(
           `Skipping EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
         );

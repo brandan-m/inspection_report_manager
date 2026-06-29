@@ -41,6 +41,25 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
 const CHANNEL_CONVERSATION_TYPES: Array<"public"> = ["public"];
 
+export function usesTubeCountForEod(context: Pick<EodThreadContext, "assetType">): boolean {
+  return context.assetType === "Boiler";
+}
+
+export function getEodProgressFieldLabel(context: Pick<EodThreadContext, "assetType">): string {
+  return usesTubeCountForEod(context) ? "# of Tubes Scanned" : "sqft. % done";
+}
+
+export function formatEodProgressValue(
+  context: Pick<EodThreadContext, "assetType">,
+  value: number | string
+): string {
+  return usesTubeCountForEod(context) ? String(value) : `${String(value)}%`;
+}
+
+export function formatEodProgressCodeValue(context: Pick<EodThreadContext, "assetType">, value: number): string {
+  return `\`${formatEodProgressValue(context, value)}\``;
+}
+
 function workflowOptions(): PlainTextOption[] {
   return listWorkflows().map((workflow) => ({
     text: {
@@ -537,6 +556,8 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
 export function buildEodReportModal(context: EodThreadContext) {
   const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
   const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey;
+  const progressFieldLabel = getEodProgressFieldLabel(context);
+  const usesTubeCount = usesTubeCountForEod(context);
 
   return {
     type: "modal" as const,
@@ -608,7 +629,7 @@ export function buildEodReportModal(context: EodThreadContext) {
           action_id: CALLBACKS.eodScansCompletedAction,
           is_decimal_allowed: false,
           min_value: "0",
-          max_value: "100",
+          ...(usesTubeCount ? {} : { max_value: "100" }),
           placeholder: {
             type: "plain_text",
             text: "0"
@@ -616,7 +637,7 @@ export function buildEodReportModal(context: EodThreadContext) {
         },
         label: {
           type: "plain_text",
-          text: "sqft. % done"
+          text: progressFieldLabel
         }
       },
       {
@@ -660,6 +681,7 @@ export function buildEodReportModal(context: EodThreadContext) {
 }
 
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
+  const progressFieldLabel = getEodProgressFieldLabel(context);
   const lines = [
     `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
     `Asset: ${context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey}`,
@@ -667,7 +689,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `Date: ${values.date}`,
     `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
-    `sqft. % done: ${values.numberOfScansCompleted}%`,
+    `${progressFieldLabel}: ${formatEodProgressValue(context, values.numberOfScansCompleted)}`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   ];
 
@@ -679,6 +701,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
 }
 
 export function buildEodDescriptionContent(context: EodThreadContext, values: EodReportFormValues): JiraDocNode[] {
+  const progressFieldLabel = getEodProgressFieldLabel(context);
   const content: JiraDocNode[] = [
     jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
     jiraParagraph("Asset", context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey),
@@ -700,7 +723,7 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
           } satisfies JiraDocNode
         ]),
     jiraParagraph("JSA Submitted", values.jsaSubmitted),
-    jiraParagraph("sqft. % done", `${String(values.numberOfScansCompleted)}%`),
+    jiraParagraph(progressFieldLabel, formatEodProgressValue(context, values.numberOfScansCompleted)),
     jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
   ];
 
