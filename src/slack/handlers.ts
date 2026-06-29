@@ -755,7 +755,7 @@ function buildEodCompletionMessage(input: {
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
-    `*${progressFieldLabel}:* ${escapeSlackText(formatEodProgressValue(input.context, input.values.numberOfScansCompleted))}`,
+    `*${progressFieldLabel}:* ${formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted)}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
 
