@@ -797,12 +797,6 @@ async function buildEodDataOperationsAlertMessage(input: {
   resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
   if (usesTubeCountForEod(input.context)) {
-    const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_IDENTIFIERS);
-
-    if (!dataOperationsMention) {
-      return undefined;
-    }
-
     const asset = escapeSlackText(getParentTaskSummary(input.context));
     const inspection = escapeSlackText(getParentInspectionSummary(input.context));
     const tubesScanned = formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted);
@@ -819,7 +813,7 @@ async function buildEodDataOperationsAlertMessage(input: {
             text:
               `:rotating_light: *Boiler scan update*\n` +
               `*# of Tubes Scanned:* ${tubesScanned}\n` +
-              `${asset} for ${inspection} reported a new boiler scan count. ${dataOperationsMention}`
+              `${asset} for ${inspection} reported a new boiler scan count.`
           }
         }
       ]
