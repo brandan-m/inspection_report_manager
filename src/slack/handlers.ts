@@ -113,6 +113,18 @@ function getRichTextValue(
   return undefined;
 }
 
+function decodeEodContextForLogging(privateMetadata?: string): EodThreadContext | undefined {
+  if (!privateMetadata) {
+    return undefined;
+  }
+
+  try {
+    return decodeEodThreadContext(privateMetadata);
+  } catch {
+    return undefined;
+  }
+}
+
 function getSelectedOptionsValues(
   stateValues: ModalState | undefined,
   blockId: string,
@@ -1650,6 +1662,66 @@ export function registerSlackHandlers(app: App): void {
     });
 
     logger.info(`Opened EOD intake modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.eodScansCompletedAction, async ({ ack, body, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD scans completed input action did not include a modal view.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const actionValue = action && "value" in action ? action.value : undefined;
+    const stateValue = getPlainTextValue(
+      body.view.state.values,
+      CALLBACKS.eodScansCompletedBlock,
+      CALLBACKS.eodScansCompletedAction
+    );
+    const context = decodeEodContextForLogging(body.view.private_metadata);
+
+    logger.info(
+      `EOD scans completed input changed ${JSON.stringify({
+        userId: body.user.id,
+        workflowKey: context?.workflowKey,
+        threadTs: context?.threadTs,
+        assetType: context?.assetType,
+        actionValue,
+        stateValue,
+        viewId: body.view.id
+      })}`
+    );
+  });
+
+  app.action(CALLBACKS.eodScanningTimeAction, async ({ ack, body, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD scanning time input action did not include a modal view.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const actionValue = action && "value" in action ? action.value : undefined;
+    const stateValue = getPlainTextValue(
+      body.view.state.values,
+      CALLBACKS.eodScanningTimeBlock,
+      CALLBACKS.eodScanningTimeAction
+    );
+    const context = decodeEodContextForLogging(body.view.private_metadata);
+
+    logger.info(
+      `EOD scanning time input changed ${JSON.stringify({
+        userId: body.user.id,
+        workflowKey: context?.workflowKey,
+        threadTs: context?.threadTs,
+        assetType: context?.assetType,
+        actionValue,
+        stateValue,
+        viewId: body.view.id
+      })}`
+    );
   });
 
   app.action(CALLBACKS.eodCloseoutButton, async ({ ack, body, client, logger }) => {
