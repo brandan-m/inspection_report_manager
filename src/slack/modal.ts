@@ -624,6 +624,7 @@ export function buildEodReportModal(context: EodThreadContext) {
       {
         type: "input",
         block_id: CALLBACKS.eodScansCompletedBlock,
+        dispatch_action: true,
         element: {
           type: "number_input",
           action_id: CALLBACKS.eodScansCompletedAction,
@@ -643,6 +644,7 @@ export function buildEodReportModal(context: EodThreadContext) {
       {
         type: "input",
         block_id: CALLBACKS.eodScanningTimeBlock,
+        dispatch_action: true,
         element: {
           type: "number_input",
           action_id: CALLBACKS.eodScanningTimeAction,
