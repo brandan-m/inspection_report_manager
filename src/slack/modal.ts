@@ -432,6 +432,7 @@ export function buildCreateIssueModal(
       {
         type: "input",
         block_id: CALLBACKS.eodAssetTypeBlock,
+        dispatch_action: true,
         element: {
           type: "static_select",
           action_id: CALLBACKS.eodAssetTypeAction,
