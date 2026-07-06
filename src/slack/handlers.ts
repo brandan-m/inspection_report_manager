@@ -56,15 +56,10 @@ import {
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
 
-const DATA_OPERATIONS_USERGROUP_IDENTIFIERS = [
+const DATA_TEAM_USERGROUP_IDENTIFIERS = [
   "data_team",
   "@data_team",
-  "data-operations",
-  "data_operations",
-  "data-ops",
-  "data_ops",
   "data-team",
-  "data operations",
   "data team"
 ] as const;
 
@@ -350,12 +345,62 @@ function getModalStateValues(stateValues?: ModalState) {
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     ),
+    eodTotalTubeCount: getPlainTextValue(
+      stateValues,
+      CALLBACKS.eodTotalTubeCountBlock,
+      CALLBACKS.eodTotalTubeCountAction
+    ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
     blockerType: parseBlockerType(blockerTypeValue),
     opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction),
     ehs: getEhsModalStateValues(stateValues)
   };
+}
+
+function getBoilerTubeCompletionPercent(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  scannedTubeCount: number
+): number | undefined {
+  if (!usesTubeCountForEod(context)) {
+    return undefined;
+  }
+
+  if (typeof context.totalTubeCount !== "number" || !Number.isFinite(context.totalTubeCount) || context.totalTubeCount <= 0) {
+    return undefined;
+  }
+
+  return (scannedTubeCount / context.totalTubeCount) * 100;
+}
+
+function hasReachedDataOperationsAlertThreshold(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  progressValue: number
+): boolean {
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
+
+  if (usesTubeCountForEod(context)) {
+    return typeof boilerCompletionPercent === "number" && boilerCompletionPercent >= 80;
+  }
+
+  return progressValue >= 80;
+}
+
+function isEodScopeComplete(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  progressValue: number
+): boolean {
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
+
+  if (usesTubeCountForEod(context)) {
+    return typeof boilerCompletionPercent === "number" && boilerCompletionPercent >= 100;
+  }
+
+  return progressValue >= 100;
+}
+
+function formatPercentValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
 }
 
 function clearEodTaskSelectionIfParentChanged(
@@ -653,6 +698,10 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
   const assetTask = buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context));
   const progressFieldLabel = usesTubeCountForEod(context) ? "Last # of Tubes Scanned" : "Last % Coverage Update";
+  const totalTubeCountLine =
+    usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? `*Total Tubes:* \`${String(context.totalTubeCount)}\``
+      : undefined;
   const reportStatus = context.reportIssueKey
     ? `:white_check_mark: ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`
     : ":hourglass_flowing_sand: Pending";
@@ -664,6 +713,7 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const statusLines = [
     `*Thread Status:* ${status === "closed" ? ":white_check_mark: Closed Out" : ":large_green_circle: Active"}`,
     `*Scanning Scope:* ${status === "closed" ? ":white_check_mark: Completed" : ":hourglass_flowing_sand: In Progress"}`,
+    ...(totalTubeCountLine ? [totalTubeCountLine] : []),
     `*${progressFieldLabel}:* ${coverageStatus}`,
     `*Last EOD Report:* ${reportStatus}`
   ];
@@ -764,6 +814,9 @@ function buildEodCompletionMessage(input: {
     `*Parent Inspection:* ${parentInspection}`,
     `*Asset:* ${assetTask}`,
     `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
+    ...(usesTubeCountForEod(input.context) && typeof input.context.totalTubeCount === "number"
+      ? [`*Total Tubes:* ${String(input.context.totalTubeCount)}`]
+      : []),
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
@@ -808,15 +861,11 @@ async function buildEodDataOperationsAlertMessage(input: {
   values: EodReportFormValues;
   resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
-  if (usesTubeCountForEod(input.context)) {
+  if (!hasReachedDataOperationsAlertThreshold(input.context, input.values.numberOfScansCompleted)) {
     return undefined;
   }
 
-  if (input.values.numberOfScansCompleted < 80) {
-    return undefined;
-  }
-
-  const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_IDENTIFIERS);
+  const dataOperationsMention = await input.resolveUserGroupMention(DATA_TEAM_USERGROUP_IDENTIFIERS);
 
   if (!dataOperationsMention) {
     return undefined;
@@ -824,17 +873,24 @@ async function buildEodDataOperationsAlertMessage(input: {
 
   const asset = escapeSlackText(getParentTaskSummary(input.context));
   const inspection = escapeSlackText(getParentInspectionSummary(input.context));
-  const isCoverageComplete = input.values.numberOfScansCompleted >= 100;
+  const isCoverageComplete = isEodScopeComplete(input.context, input.values.numberOfScansCompleted);
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(input.context, input.values.numberOfScansCompleted);
   const header = isCoverageComplete
     ? ":rotating_light: *Inspection scope completed*"
     : ":rotating_light: *Inspection nearing completion*";
+  const progressLine =
+    typeof boilerCompletionPercent === "number" && typeof input.context.totalTubeCount === "number"
+      ? `*Tube Progress:* \`${input.values.numberOfScansCompleted}/${input.context.totalTubeCount}\` tubes (\`${formatPercentValue(
+          boilerCompletionPercent
+        )}%\`)`
+      : `*Coverage:* \`${input.values.numberOfScansCompleted}%\``;
   const body = isCoverageComplete
-    ? `*Coverage:* \`100%\`\n${asset} for ${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
-    : `*Coverage:* \`${input.values.numberOfScansCompleted}%\`\n${asset} for ${inspection} is nearing completion. ${dataOperationsMention}`;
+    ? `${progressLine}\n${asset} for ${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
+    : `${progressLine}\n${asset} for ${inspection} is nearing completion. ${dataOperationsMention}`;
 
   return {
     text: isCoverageComplete
-      ? `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} has reached 100% coverage.`
+      ? `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} has completed inspection scope.`
       : `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} is nearing completion.`,
     blocks: [
       {
@@ -1177,7 +1233,10 @@ function summarizeCreateIssueSubmission(input: {
   });
 }
 
-function validateEodForm(values: ModalState | undefined, context: Pick<EodThreadContext, "assetType">) {
+function validateEodForm(
+  values: ModalState | undefined,
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">
+) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
   const fullDayOverviewValue = getRichTextValue(
@@ -1225,6 +1284,14 @@ function validateEodForm(values: ModalState | undefined, context: Pick<EodThread
     errors[CALLBACKS.eodScansCompletedBlock] = usesTubeCount
       ? "Enter a number greater than or equal to 0."
       : "Enter a number from 0 to 100.";
+  } else if (
+    usesTubeCount &&
+    typeof context.totalTubeCount === "number" &&
+    Number(scansCompletedValue) > context.totalTubeCount
+  ) {
+    errors[CALLBACKS.eodScansCompletedBlock] = `Scanned tubes cannot exceed the total tube count of ${String(
+      context.totalTubeCount
+    )}.`;
   }
 
   if (!scanningTimeValue) {
@@ -1533,6 +1600,56 @@ export function registerSlackHandlers(app: App): void {
     }
 
     logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
+  });
+
+  app.action(CALLBACKS.eodAssetTypeAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD asset type action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+    const state = getModalStateValues(body.view.state.values);
+    const selectedAssetType = parseEodAssetType(getSelectedOptionValue(body.actions[0]));
+    const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+      ? state.selectedIssueType
+      : workflow.allowedIssueTypes[0];
+
+    logger.info(
+      `Attempting modal EOD asset type update for workflow ${workflow.key} to ${selectedAssetType ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              selectedIssueType,
+              eodAssetType: selectedAssetType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal EOD asset type update for workflow ${workflow.key}`
+      );
+    } catch (error) {
+      return;
+    }
+
+    logger.info(`Updated modal EOD asset type for workflow ${workflow.key} to ${selectedAssetType ?? "n/a"}`);
   });
 
   app.action(CALLBACKS.epicAction, async ({ ack, body, client, logger }) => {
@@ -1923,6 +2040,8 @@ export function registerSlackHandlers(app: App): void {
     const selectedThreadAssetType = parseEodAssetType(
       getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     );
+    const selectedTotalTubeCountValue =
+      getPlainTextValue(values, CALLBACKS.eodTotalTubeCountBlock, CALLBACKS.eodTotalTubeCountAction) ?? "";
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -2041,6 +2160,32 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    const requiresBoilerTubeCount = isEod && selectedThreadAssetType === "Boiler";
+
+    if (requiresBoilerTubeCount) {
+      const totalTubeCount = Number(selectedTotalTubeCountValue);
+
+      if (!selectedTotalTubeCountValue) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [CALLBACKS.eodTotalTubeCountBlock]: "Please enter the total number of tubes for this boiler."
+          }
+        });
+        return;
+      }
+
+      if (!Number.isInteger(totalTubeCount) || totalTubeCount <= 0) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [CALLBACKS.eodTotalTubeCountBlock]: "Enter a whole number greater than 0."
+          }
+        });
+        return;
+      }
+    }
+
     if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
       const blockerTypeLabel =
@@ -2151,6 +2296,7 @@ export function registerSlackHandlers(app: App): void {
           parentTaskLabel,
           parentTaskSummary,
           assetType: selectedThreadAssetType as EodAssetType,
+          totalTubeCount: requiresBoilerTubeCount ? Number(selectedTotalTubeCountValue) : undefined,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
@@ -2494,9 +2640,12 @@ export function registerSlackHandlers(app: App): void {
         resolveUserGroupMention: resolveSlackUserGroupMention
       });
 
-      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
+      if (
+        hasReachedDataOperationsAlertThreshold(context, validation.values.numberOfScansCompleted) &&
+        !dataOperationsAlert
+      ) {
         logger.warn(
-          `Skipping EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
+          `Skipping EOD data team alert for thread ${context.threadTs} because the data_team Slack user group could not be resolved.`
         );
       }
 

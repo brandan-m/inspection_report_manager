@@ -153,6 +153,7 @@ export interface EodThreadContext {
   parentTaskLabel?: string;
   parentTaskSummary: string;
   assetType: EodAssetType;
+  totalTubeCount?: number;
   requesterId: string;
   channelId: string;
   threadTs: string;
