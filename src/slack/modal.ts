@@ -194,6 +194,7 @@ export interface ModalStateValues {
   eodTaskKey?: string;
   eodTaskLabel?: string;
   eodAssetType?: EodAssetType;
+  eodTotalTubeCount?: string;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -445,7 +446,30 @@ export function buildCreateIssueModal(
           type: "plain_text",
           text: "Asset Type"
         }
-      }
+      },
+      ...(state.eodAssetType === "Boiler"
+        ? [
+            {
+              type: "input" as const,
+              block_id: CALLBACKS.eodTotalTubeCountBlock,
+              element: {
+                type: "number_input" as const,
+                action_id: CALLBACKS.eodTotalTubeCountAction,
+                is_decimal_allowed: false,
+                min_value: "1",
+                initial_value: state.eodTotalTubeCount,
+                placeholder: {
+                  type: "plain_text" as const,
+                  text: "Enter the total tube count for this boiler"
+                }
+              },
+              label: {
+                type: "plain_text" as const,
+                text: "Total # of Tubes"
+              }
+            }
+          ]
+        : [])
     );
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
@@ -520,6 +544,10 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
       : undefined;
   const closedOutAt =
     typeof parsed.closedOutAt === "string" && parsed.closedOutAt.trim().length > 0 ? parsed.closedOutAt : undefined;
+  const totalTubeCount =
+    typeof parsed.totalTubeCount === "number" && Number.isFinite(parsed.totalTubeCount) && parsed.totalTubeCount > 0
+      ? parsed.totalTubeCount
+      : undefined;
 
   if (
     !parsed.workflowKey ||
@@ -542,6 +570,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     parentTaskLabel: parsed.parentTaskLabel,
     parentTaskSummary: parsed.parentTaskSummary,
     assetType: parsed.assetType,
+    totalTubeCount,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs,
@@ -558,6 +587,7 @@ export function buildEodReportModal(context: EodThreadContext) {
   const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey;
   const progressFieldLabel = getEodProgressFieldLabel(context);
   const usesTubeCount = usesTubeCountForEod(context);
+  const boilerDetails = usesTubeCount && typeof context.totalTubeCount === "number" ? `\n*Total Tubes:* ${context.totalTubeCount}` : "";
 
   return {
     type: "modal" as const,
@@ -583,7 +613,7 @@ export function buildEodReportModal(context: EodThreadContext) {
           text:
             `*Parent Inspection:* ${parentInspectionLabel}\n` +
             `*Asset:* ${parentTaskLabel}\n` +
-            `*Asset Type:* ${context.assetType}`
+            `*Asset Type:* ${context.assetType}${boilerDetails}`
         }
       },
       {
@@ -688,6 +718,9 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
     `Asset: ${context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey}`,
     `Asset Type: ${context.assetType}`,
+    ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? [`Total Tubes: ${context.totalTubeCount}`]
+      : []),
     `Date: ${values.date}`,
     `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
@@ -708,6 +741,9 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
     jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
     jiraParagraph("Asset", context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey),
     jiraParagraph("Asset Type", context.assetType),
+    ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? [jiraParagraph("Total Tubes", String(context.totalTubeCount))]
+      : []),
     jiraParagraph("Date", values.date),
     {
       type: "heading",
