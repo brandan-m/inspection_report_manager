@@ -58,9 +58,46 @@ function normalizeSlackLabel(label: string): string {
   return label.replace(/\s+/g, " ").trim();
 }
 
-export function buildIssueSelectOption(issueKey: string, issueSummary?: string): PlainTextOption {
+function buildQueryAwareOptionText(summary: string, query?: string): string {
+  if (summary.length <= SLACK_OPTION_TEXT_LIMIT) {
+    return summary;
+  }
+
+  const normalizedQuery = query?.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return truncateSlackOptionLine(summary);
+  }
+
+  const matchIndex = summary.toLowerCase().indexOf(normalizedQuery);
+
+  if (matchIndex === -1) {
+    return truncateSlackOptionLine(summary);
+  }
+
+  const ellipsis = "...";
+  const contextBudget = SLACK_OPTION_TEXT_LIMIT - normalizedQuery.length - ellipsis.length * 2;
+
+  if (contextBudget <= 0) {
+    return truncateSlackOptionLine(summary);
+  }
+
+  const leftBudget = Math.floor(contextBudget / 2);
+  const rightBudget = contextBudget - leftBudget;
+  const desiredStart = Math.max(0, matchIndex - leftBudget);
+  const desiredEnd = Math.min(summary.length, matchIndex + normalizedQuery.length + rightBudget);
+  const slice = summary.slice(desiredStart, desiredEnd).trim();
+  const prefix = desiredStart > 0 ? ellipsis : "";
+  const suffix = desiredEnd < summary.length ? ellipsis : "";
+
+  return truncateSlackOptionLine(`${prefix}${slice}${suffix}`);
+}
+
+export function buildIssueSelectOption(issueKey: string, issueSummary?: string, query?: string): PlainTextOption {
   const normalizedSummary = issueSummary?.trim();
-  const text = normalizedSummary ? truncateSlackOptionLine(normalizeSlackLabel(normalizedSummary)) : issueKey;
+  const text = normalizedSummary
+    ? buildQueryAwareOptionText(normalizeSlackLabel(normalizedSummary), query)
+    : issueKey;
 
   return {
     text: {

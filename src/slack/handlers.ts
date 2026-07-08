@@ -1916,7 +1916,7 @@ export function registerSlackHandlers(app: App): void {
 
       await ack({
         options: epics.map((epic) => ({
-          ...buildIssueSelectOption(epic.key, epic.summary)
+          ...buildIssueSelectOption(epic.key, epic.summary, query)
         }))
       });
 
@@ -1945,7 +1945,7 @@ export function registerSlackHandlers(app: App): void {
 
       await ack({
         options: tasks.map((task) => ({
-          ...buildIssueSelectOption(task.key, task.summary)
+          ...buildIssueSelectOption(task.key, task.summary, query)
         }))
       });
 
