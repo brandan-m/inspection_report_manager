@@ -18,7 +18,8 @@ import type {
   EodYesNo,
   SelectableIssueType,
   SupportedIssueType,
-  WorkflowDefinition
+  WorkflowDefinition,
+  WorkflowParentIssueType
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import { richTextInputBlock } from "./richText.js";
@@ -293,22 +294,48 @@ export interface ModalMetadata {
   requireChannelSelection?: boolean;
 }
 
+function isWorkflowWithBugFields(workflow: WorkflowDefinition): boolean {
+  return workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "UIM";
+}
+
 function requiresBugFields(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
-  return (workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "APIDD") && issueType === "Bug";
+  return isWorkflowWithBugFields(workflow) && issueType === "Bug";
 }
 
 function blockerTypeLabel(workflow: WorkflowDefinition): string {
-  return workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
+  if (workflow.jiraProjectKey === "RB") {
+    return "RUG Blocker Type";
+  }
+
+  if (workflow.jiraProjectKey === "UIM") {
+    return "UAE Blocker Type";
+  }
+
+  return "Blocker Type";
 }
 
 function downtimeLabel(workflow: WorkflowDefinition): string {
-  return workflow.jiraProjectKey === "APIDD" ? "API Ops Downtime (hours)" : "RUG Ops Downtime (hours)";
+  if (workflow.jiraProjectKey === "RB") {
+    return "RUG Ops Downtime (hours)";
+  }
+
+  if (workflow.jiraProjectKey === "UIM") {
+    return "UAE Ops Downtime (hours)";
+  }
+
+  return "Ops Downtime (hours)";
 }
 
 function bugFieldPlaceholder(workflow: WorkflowDefinition): string {
-  return workflow.jiraProjectKey === "APIDD"
-    ? "Required for API Data Delivery Bugs"
-    : "Required for Reporting/Job Board Bugs";
+  if (workflow.jiraProjectKey === "RB") {
+    return "Required for Reporting/Job Board Bugs";
+  }
+
+  if (workflow.jiraProjectKey === "UIM") {
+    return "Required for UAE Inspection Mobilization Bugs";
+  }
+
+  return "Required for Bugs";
 }
 
 function usesEhsIntake(workflow: WorkflowDefinition, issueType: SelectableIssueType): boolean {
@@ -317,6 +344,38 @@ function usesEhsIntake(workflow: WorkflowDefinition, issueType: SelectableIssueT
 
 function shouldShowIssueTypeSelector(workflow: WorkflowDefinition): boolean {
   return workflow.allowedIssueTypes.length > 1;
+}
+
+export function getWorkflowParentIssueType(workflow: WorkflowDefinition): WorkflowParentIssueType {
+  return workflow.parentIssueType ?? "Epic";
+}
+
+export function workflowRequiresSeparateEodAssetTask(workflow: WorkflowDefinition): boolean {
+  return (workflow.eodAssetSelectionMode ?? "child_task") === "child_task";
+}
+
+function getWorkflowParentIssueLabel(workflow: WorkflowDefinition): string {
+  return getWorkflowParentIssueType(workflow) === "Task" ? "Parent Inspection" : "Parent Epic";
+}
+
+function getWorkflowParentSearchPlaceholder(workflow: WorkflowDefinition): string {
+  return getWorkflowParentIssueType(workflow) === "Task" ? "Search Jira Tasks" : "Search Jira Epics";
+}
+
+function hasSeparateEodAssetTask(context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskSummary">): boolean {
+  return Boolean(context.parentTaskKey?.trim() || context.parentTaskSummary?.trim());
+}
+
+function getEodAssetDisplayLabel(
+  context: Pick<EodThreadContext, "parentEpicKey" | "parentEpicLabel" | "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+): string {
+  return (
+    context.parentTaskLabel ??
+    context.parentTaskSummary ??
+    context.parentTaskKey ??
+    context.parentEpicLabel ??
+    context.parentEpicKey
+  );
 }
 
 export function shouldCollectEodInThread(issueType: SelectableIssueType): boolean {
@@ -329,8 +388,11 @@ export function buildCreateIssueModal(
   metadata: Partial<ModalMetadata> = {}
 ) {
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
-  const selectedParentEpicPreview = buildSelectedIssuePreview("Parent Epic", state.parentEpicKey, state.parentEpicLabel);
-  const selectedAssetTaskPreview = buildSelectedIssuePreview("Asset Task", state.eodTaskKey, state.eodTaskLabel);
+  const parentIssueLabel = getWorkflowParentIssueLabel(defaultWorkflow);
+  const selectedParentEpicPreview = buildSelectedIssuePreview(parentIssueLabel, state.parentEpicKey, state.parentEpicLabel);
+  const selectedAssetTaskPreview = workflowRequiresSeparateEodAssetTask(defaultWorkflow)
+    ? buildSelectedIssuePreview("Asset Task", state.eodTaskKey, state.eodTaskLabel)
+    : undefined;
   const blocks: KnownBlock[] = [
     {
       type: "section",
@@ -389,7 +451,7 @@ export function buildCreateIssueModal(
       block_id: CALLBACKS.epicBlock,
       text: {
         type: "mrkdwn",
-        text: "*Parent Epic*"
+        text: `*${parentIssueLabel}*`
       },
       accessory: {
         type: "external_select",
@@ -401,7 +463,7 @@ export function buildCreateIssueModal(
             : undefined,
         placeholder: {
           type: "plain_text",
-          text: "Search Jira Epics"
+          text: getWorkflowParentSearchPlaceholder(defaultWorkflow)
         }
       }
     },
@@ -482,29 +544,34 @@ export function buildCreateIssueModal(
   if (usesEhsIntake(defaultWorkflow, selectedIssueType)) {
     blocks.push(...buildEhsTaskBlocks(state.ehs));
   } else if (shouldCollectEodInThread(selectedIssueType)) {
-    blocks.push(
-      {
-        type: "section",
-        block_id: CALLBACKS.eodTaskBlock,
-        text: {
-          type: "mrkdwn",
-          text: "*Asset Task*"
-        },
-        accessory: {
-          type: "external_select",
-          action_id: CALLBACKS.eodTaskAction,
-          min_query_length: 0,
-          initial_option:
-            state.eodTaskKey && state.eodTaskLabel
-              ? buildIssueSelectOption(state.eodTaskKey, state.eodTaskLabel)
-              : undefined,
-          placeholder: {
-            type: "plain_text",
-            text: "Search child Tasks under the parent Epic"
+    if (workflowRequiresSeparateEodAssetTask(defaultWorkflow)) {
+      blocks.push(
+        {
+          type: "section",
+          block_id: CALLBACKS.eodTaskBlock,
+          text: {
+            type: "mrkdwn",
+            text: "*Asset Task*"
+          },
+          accessory: {
+            type: "external_select",
+            action_id: CALLBACKS.eodTaskAction,
+            min_query_length: 0,
+            initial_option:
+              state.eodTaskKey && state.eodTaskLabel
+                ? buildIssueSelectOption(state.eodTaskKey, state.eodTaskLabel)
+                : undefined,
+            placeholder: {
+              type: "plain_text",
+              text: "Search child Tasks under the selected parent"
+            }
           }
-        }
-      },
-      ...(selectedAssetTaskPreview ? [selectedAssetTaskPreview] : []),
+        },
+        ...(selectedAssetTaskPreview ? [selectedAssetTaskPreview] : [])
+      );
+    }
+
+    blocks.push(
       {
         type: "input",
         block_id: CALLBACKS.eodAssetTypeBlock,
@@ -629,8 +696,6 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
   if (
     !parsed.workflowKey ||
     !parsed.parentEpicKey ||
-    !parsed.parentTaskKey ||
-    !parsed.parentTaskSummary ||
     !parsed.assetType ||
     !parsed.requesterId ||
     !parsed.channelId ||
@@ -661,10 +726,20 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
 
 export function buildEodReportModal(context: EodThreadContext) {
   const parentInspectionLabel = context.parentEpicLabel ?? context.parentEpicKey;
-  const parentTaskLabel = context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey;
+  const parentTaskLabel = getEodAssetDisplayLabel(context);
   const progressFieldLabel = getEodProgressFieldLabel(context);
   const usesTubeCount = usesTubeCountForEod(context);
-  const boilerDetails = usesTubeCount && typeof context.totalTubeCount === "number" ? `\n*Total Tubes:* ${context.totalTubeCount}` : "";
+  const summaryLines = [`*Parent Inspection:* ${parentInspectionLabel}`];
+
+  if (hasSeparateEodAssetTask(context) && parentTaskLabel) {
+    summaryLines.push(`*Asset:* ${parentTaskLabel}`);
+  }
+
+  summaryLines.push(`*Asset Type:* ${context.assetType}`);
+
+  if (usesTubeCount && typeof context.totalTubeCount === "number") {
+    summaryLines.push(`*Total Tubes:* ${context.totalTubeCount}`);
+  }
 
   return {
     type: "modal" as const,
@@ -687,10 +762,7 @@ export function buildEodReportModal(context: EodThreadContext) {
         type: "section",
         text: {
           type: "mrkdwn",
-          text:
-            `*Parent Inspection:* ${parentInspectionLabel}\n` +
-            `*Asset:* ${parentTaskLabel}\n` +
-            `*Asset Type:* ${context.assetType}${boilerDetails}`
+          text: summaryLines.join("\n")
         }
       },
       {
@@ -791,9 +863,13 @@ export function buildEodReportModal(context: EodThreadContext) {
 
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const progressFieldLabel = getEodProgressFieldLabel(context);
-  const lines = [
-    `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
-    `Asset: ${context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey}`,
+  const lines = [`Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`];
+
+  if (hasSeparateEodAssetTask(context)) {
+    lines.push(`Asset: ${getEodAssetDisplayLabel(context)}`);
+  }
+
+  lines.push(
     `Asset Type: ${context.assetType}`,
     ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
       ? [`Total Tubes: ${context.totalTubeCount}`]
@@ -803,7 +879,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
     `JSA Submitted: ${values.jsaSubmitted}`,
     `${progressFieldLabel}: ${formatEodProgressValue(context, values.numberOfScansCompleted)}`,
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
-  ];
+  );
 
   if (values.notes?.trim()) {
     lines.push(`Notes:\n${values.notes.trim()}`);
@@ -814,9 +890,13 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
 
 export function buildEodDescriptionContent(context: EodThreadContext, values: EodReportFormValues): JiraDocNode[] {
   const progressFieldLabel = getEodProgressFieldLabel(context);
-  const content: JiraDocNode[] = [
-    jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
-    jiraParagraph("Asset", context.parentTaskLabel ?? context.parentTaskSummary ?? context.parentTaskKey),
+  const content: JiraDocNode[] = [jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey)];
+
+  if (hasSeparateEodAssetTask(context)) {
+    content.push(jiraParagraph("Asset", getEodAssetDisplayLabel(context)));
+  }
+
+  content.push(
     jiraParagraph("Asset Type", context.assetType),
     ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
       ? [jiraParagraph("Total Tubes", String(context.totalTubeCount))]
@@ -840,7 +920,7 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
     jiraParagraph("JSA Submitted", values.jsaSubmitted),
     jiraParagraph(progressFieldLabel, formatEodProgressValue(context, values.numberOfScansCompleted)),
     jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
-  ];
+  );
 
   if (values.notes?.trim()) {
     content.push({
@@ -860,7 +940,9 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
 }
 
 export function buildEodReportSummary(context: EodThreadContext, values: EodReportFormValues): string {
-  const assetSummary = context.parentTaskSummary.trim() || context.parentTaskLabel?.trim() || context.parentTaskKey;
+  const assetSummary = hasSeparateEodAssetTask(context)
+    ? context.parentTaskSummary?.trim() || context.parentTaskLabel?.trim() || context.parentTaskKey || context.parentEpicKey
+    : context.parentEpicLabel?.trim() || context.parentEpicKey;
   return `${values.date} ${context.assetType} ${assetSummary} EOD Report`.replace(/\s+/g, " ").trim();
 }
 

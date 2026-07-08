@@ -1,6 +1,6 @@
 # gecko_reporting_workflow
 
-`gecko_reporting_workflow` is a small Slack-to-Jira integration service for creating Jira work from Slack while keeping Jira Epics as the parent source of truth.
+`gecko_reporting_workflow` is a small Slack-to-Jira integration service for creating Jira work from Slack while keeping the configured parent Jira issue as the source of truth.
 
 The repository is structured so additional Jira workflows, boards, or filter-backed scopes can be added later without changing the core Slack handling flow.
 
@@ -9,9 +9,9 @@ Production deployment is triggered from a semver release tag after the repositor
 ## What It Does
 
 - Opens a Slack modal from a shortcut or App Home flow
-- Searches Jira Epics live for the selected workflow
+- Searches the configured parent Jira issues live for the selected workflow
 - Creates `Bug`, `EOD Report`, or `Task` issues in Jira
-- Attaches the selected Epic as the parent
+- Attaches the selected parent Jira issue
 - Copies optional Slack-uploaded screenshots and documents into both Slack follow-ups and the created Jira ticket
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
 - Posts a follow-up EOD thread alert to `@data_team` when coverage reaches `80%` or higher
@@ -23,12 +23,6 @@ Production deployment is triggered from a semver release tag after the repositor
 
 The repo currently includes:
 
-- Label: `API Data Delivery`
-- Key: `api_data_delivery`
-- Jira project: `APIDD`
-- Allowed work types:
-  - `Bug`
-  - `EOD Report`
 - Label: `Reporting/Job Board`
 - Key: `reporting_job_board`
 - Jira project: `RB`
@@ -38,6 +32,21 @@ The repo currently includes:
 - Additional Bug fields:
   - `RUG Blocker Type`
   - `RUG Ops Downtime (hours)`
+- Parent issue search scope:
+  - `project = RB AND issuetype = Epic`
+- Label: `UAE Inspection Mobilization`
+- Key: `uae_inspection_mobilization`
+- Jira project: `UIM`
+- Allowed work types:
+  - `Bug`
+  - `EOD Report`
+- Parent issue type:
+  - `Task`
+- Parent issue search scope:
+  - `project = UIM AND issuetype = Task`
+- EOD intake behavior:
+  - uses the selected parent inspection `Task` directly
+  - does not prompt for a separate child asset task
 - Label: `EHS Jobs`
 - Key: `ehs_jobs`
 - Jira project: `EHSJOB`
@@ -147,19 +156,21 @@ Recommended App Home setup:
 
 Create a Jira API token for the service account and confirm that:
 
-- the account can search Epics in `APIDD`
-- the account can create issues in `APIDD`
 - the account can search Epics in `RB`
 - the account can create issues in `RB`
+- the account can search parent Tasks in `UIM`
+- the account can create issues in `UIM`
 - the account can search Epics in `EHSJOB`
 - the account can create issues in `EHSJOB`
-- `Bug`, `EOD Report`, and `Task` are standard issue types under Epic in your Jira scheme
+- `Bug`, `EOD Report`, and `Task` are valid issue types under the configured parent issue type for each workflow
 - any workflow-specific required fields are either present in the modal or no longer required in Jira
 
-The initial Epic search JQL is:
+The default parent issue search JQLs are:
 
 ```text
-project = APIDD AND issuetype = Epic
+project = RB AND issuetype = Epic
+project = UIM AND issuetype = Task
+project = EHSJOB AND issuetype = Epic
 ```
 
 ## Testing Flow
@@ -170,10 +181,12 @@ For a local smoke test:
 2. Open `Gecko Reporting Workflow` in Slack
 3. Use the App Home button to open the modal
 4. Verify:
-   - `API Data Delivery` only shows APIDD Epics
    - `Reporting/Job Board` only shows RB Epics
+   - `UAE Inspection Mobilization` only shows UIM Tasks
    - `EHS Jobs` only shows EHSJOB Epics
   - RB Bug flows show the extra required fields
+  - UIM Bug flows do not show RB-only Bug fields
+  - UIM EOD flows only ask for the parent inspection and asset type
   - EOD flows do not show RB-only Bug fields
   - EHS Task flows show the structured intake instead of the generic details box
   - EOD flows create a thread in the same Slack channel where the workflow was launched
@@ -251,7 +264,7 @@ Before calling it production-ready:
 - verify `npm run build && npm start` works in the host environment
 - confirm Slack scopes include `im:write` if you want DM confirmations
 - confirm Slack scopes include `users:read` and `users:read.email` if you want Slack `@mentions` to become Jira user mentions
-- verify both APIDD and RB flows against live Jira
+- verify both RB and UIM flows against live Jira
 - decide whether `SLACK_TEST_CHANNEL_ID` should stay as a test channel or move to a production notifications channel
 - document ownership for future workflow config changes
 

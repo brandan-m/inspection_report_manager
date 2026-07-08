@@ -17,6 +17,8 @@ export type EodAssetType =
   | "Towers";
 export type EodYesNo = "Yes" | "No";
 export type EodThreadLifecycleStatus = "active" | "closed";
+export type WorkflowParentIssueType = "Epic" | "Task";
+export type EodAssetSelectionMode = "child_task" | "parent_issue";
 
 export interface WorkflowDefinition {
   key: string;
@@ -25,6 +27,8 @@ export interface WorkflowDefinition {
   allowedIssueTypes: SelectableIssueType[];
   epicSearchJql: string;
   intakeForm?: "generic" | "ehs";
+  parentIssueType?: WorkflowParentIssueType;
+  eodAssetSelectionMode?: EodAssetSelectionMode;
 }
 
 export type JiraTextMark =
@@ -149,9 +153,9 @@ export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
   parentEpicLabel?: string;
-  parentTaskKey: string;
+  parentTaskKey?: string;
   parentTaskLabel?: string;
-  parentTaskSummary: string;
+  parentTaskSummary?: string;
   assetType: EodAssetType;
   totalTubeCount?: number;
   requesterId: string;
