@@ -54,49 +54,37 @@ function truncateSlackOptionLine(text: string, limit = SLACK_OPTION_TEXT_LIMIT):
   return `${text.slice(0, limit - 3).trimEnd()}...`;
 }
 
-function splitSlackOptionLabel(label: string): { text: string; description?: string } {
-  const normalizedLabel = label.replace(/\s+/g, " ").trim();
-
-  if (normalizedLabel.length <= SLACK_OPTION_TEXT_LIMIT) {
-    return { text: normalizedLabel };
-  }
-
-  const candidate = normalizedLabel.slice(0, SLACK_OPTION_TEXT_LIMIT + 1);
-  const lastSpaceIndex = candidate.lastIndexOf(" ");
-  const splitIndex = lastSpaceIndex >= Math.floor(SLACK_OPTION_TEXT_LIMIT * 0.6) ? lastSpaceIndex : SLACK_OPTION_TEXT_LIMIT;
-  const firstLine = normalizedLabel.slice(0, splitIndex).trimEnd();
-  const remaining = normalizedLabel.slice(splitIndex).trimStart();
-
-  return {
-    text: truncateSlackOptionLine(firstLine),
-    description: remaining ? truncateSlackOptionLine(remaining) : undefined
-  };
+function normalizeSlackLabel(label: string): string {
+  return label.replace(/\s+/g, " ").trim();
 }
 
 export function buildIssueSelectOption(issueKey: string, issueSummary?: string): PlainTextOption {
   const normalizedSummary = issueSummary?.trim();
-  const label =
-    normalizedSummary && normalizedSummary.startsWith(`${issueKey} - `)
-      ? normalizedSummary
-      : normalizedSummary
-        ? `${issueKey} - ${normalizedSummary}`
-        : issueKey;
-  const { text, description } = splitSlackOptionLabel(label);
+  const text = normalizedSummary ? truncateSlackOptionLine(normalizeSlackLabel(normalizedSummary)) : issueKey;
 
   return {
     text: {
       type: "plain_text",
       text
     },
-    ...(description
-      ? {
-          description: {
-            type: "plain_text",
-            text: description
-          }
-        }
-      : {}),
     value: issueKey
+  };
+}
+
+function buildSelectedIssuePreview(issueTypeLabel: string, issueKey?: string, issueLabel?: string): KnownBlock | undefined {
+  if (!issueKey || !issueLabel) {
+    return undefined;
+  }
+
+  const normalizedLabel = normalizeSlackLabel(issueLabel);
+  const previewText = normalizedLabel.startsWith(`${issueKey} - `) ? normalizedLabel : `${issueKey} - ${normalizedLabel}`;
+
+  return {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `*Selected ${issueTypeLabel}*\n${previewText}`
+    }
   };
 }
 
@@ -304,6 +292,8 @@ export function buildCreateIssueModal(
   metadata: Partial<ModalMetadata> = {}
 ) {
   const selectedIssueType = state.selectedIssueType ?? defaultWorkflow.allowedIssueTypes[0];
+  const selectedParentEpicPreview = buildSelectedIssuePreview("Parent Epic", state.parentEpicKey, state.parentEpicLabel);
+  const selectedAssetTaskPreview = buildSelectedIssuePreview("Asset Task", state.eodTaskKey, state.eodTaskLabel);
   const blocks: KnownBlock[] = [
     {
       type: "section",
@@ -378,6 +368,7 @@ export function buildCreateIssueModal(
         }
       }
     },
+    ...(selectedParentEpicPreview ? [selectedParentEpicPreview] : []),
   ];
 
   if (shouldShowIssueTypeSelector(defaultWorkflow)) {
@@ -476,6 +467,7 @@ export function buildCreateIssueModal(
           }
         }
       },
+      ...(selectedAssetTaskPreview ? [selectedAssetTaskPreview] : []),
       {
         type: "input",
         block_id: CALLBACKS.eodAssetTypeBlock,
