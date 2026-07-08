@@ -120,6 +120,7 @@ export interface CreateIssueInput {
   workflow: WorkflowDefinition;
   issueType: SelectableIssueType;
   parentEpicKey: string;
+  jiraParentKey?: string;
   summary: string;
   details: string;
   descriptionContent?: JiraDocNode[];
@@ -153,6 +154,7 @@ export interface EodThreadContext {
   workflowKey: string;
   parentEpicKey: string;
   parentEpicLabel?: string;
+  jiraParentKey?: string;
   parentTaskKey?: string;
   parentTaskLabel?: string;
   parentTaskSummary?: string;

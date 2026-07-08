@@ -708,6 +708,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     workflowKey: parsed.workflowKey,
     parentEpicKey: parsed.parentEpicKey,
     parentEpicLabel: parsed.parentEpicLabel,
+    jiraParentKey: typeof parsed.jiraParentKey === "string" && parsed.jiraParentKey.trim().length > 0 ? parsed.jiraParentKey : undefined,
     parentTaskKey: parsed.parentTaskKey,
     parentTaskLabel: parsed.parentTaskLabel,
     parentTaskSummary: parsed.parentTaskSummary,

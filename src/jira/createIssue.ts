@@ -79,9 +79,6 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
     issuetype: {
       name: input.issueType
     },
-    parent: {
-      key: input.parentEpicKey
-    },
     summary: input.summary,
     description: {
       type: "doc",
@@ -112,6 +109,14 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
       ]
     }
   };
+
+  const jiraParentKey = input.workflow.parentIssueType === "Task" ? input.jiraParentKey : input.parentEpicKey;
+
+  if (jiraParentKey) {
+    fields.parent = {
+      key: jiraParentKey
+    };
+  }
 
   const bugFieldConfig = input.issueType === "Bug" ? getBugFieldConfig(input.workflow.jiraProjectKey) : undefined;
 
