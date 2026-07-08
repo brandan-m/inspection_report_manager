@@ -40,6 +40,65 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
 const CHANNEL_CONVERSATION_TYPES: Array<"public"> = ["public"];
+const SLACK_OPTION_TEXT_LIMIT = 75;
+
+function truncateSlackOptionLine(text: string, limit = SLACK_OPTION_TEXT_LIMIT): string {
+  if (text.length <= limit) {
+    return text;
+  }
+
+  if (limit <= 3) {
+    return text.slice(0, limit);
+  }
+
+  return `${text.slice(0, limit - 3).trimEnd()}...`;
+}
+
+function splitSlackOptionLabel(label: string): { text: string; description?: string } {
+  const normalizedLabel = label.replace(/\s+/g, " ").trim();
+
+  if (normalizedLabel.length <= SLACK_OPTION_TEXT_LIMIT) {
+    return { text: normalizedLabel };
+  }
+
+  const candidate = normalizedLabel.slice(0, SLACK_OPTION_TEXT_LIMIT + 1);
+  const lastSpaceIndex = candidate.lastIndexOf(" ");
+  const splitIndex = lastSpaceIndex >= Math.floor(SLACK_OPTION_TEXT_LIMIT * 0.6) ? lastSpaceIndex : SLACK_OPTION_TEXT_LIMIT;
+  const firstLine = normalizedLabel.slice(0, splitIndex).trimEnd();
+  const remaining = normalizedLabel.slice(splitIndex).trimStart();
+
+  return {
+    text: truncateSlackOptionLine(firstLine),
+    description: remaining ? truncateSlackOptionLine(remaining) : undefined
+  };
+}
+
+export function buildIssueSelectOption(issueKey: string, issueSummary?: string): PlainTextOption {
+  const normalizedSummary = issueSummary?.trim();
+  const label =
+    normalizedSummary && normalizedSummary.startsWith(`${issueKey} - `)
+      ? normalizedSummary
+      : normalizedSummary
+        ? `${issueKey} - ${normalizedSummary}`
+        : issueKey;
+  const { text, description } = splitSlackOptionLabel(label);
+
+  return {
+    text: {
+      type: "plain_text",
+      text
+    },
+    ...(description
+      ? {
+          description: {
+            type: "plain_text",
+            text: description
+          }
+        }
+      : {}),
+    value: issueKey
+  };
+}
 
 export function usesTubeCountForEod(context: Pick<EodThreadContext, "assetType">): boolean {
   return context.assetType === "Boiler";
@@ -310,13 +369,7 @@ export function buildCreateIssueModal(
         min_query_length: 0,
         initial_option:
           state.parentEpicKey && state.parentEpicLabel
-            ? {
-                text: {
-                  type: "plain_text",
-                  text: state.parentEpicLabel.slice(0, 75)
-                },
-                value: state.parentEpicKey
-              }
+            ? buildIssueSelectOption(state.parentEpicKey, state.parentEpicLabel)
             : undefined,
         placeholder: {
           type: "plain_text",
@@ -414,13 +467,7 @@ export function buildCreateIssueModal(
           min_query_length: 0,
           initial_option:
             state.eodTaskKey && state.eodTaskLabel
-              ? {
-                  text: {
-                    type: "plain_text",
-                    text: state.eodTaskLabel.slice(0, 75)
-                  },
-                  value: state.eodTaskKey
-                }
+              ? buildIssueSelectOption(state.eodTaskKey, state.eodTaskLabel)
               : undefined,
           placeholder: {
             type: "plain_text",

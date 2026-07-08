@@ -27,6 +27,7 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  buildIssueSelectOption,
   buildEodDescriptionContent,
   buildEodReportSummary,
   buildCreateIssueModal,
@@ -79,6 +80,28 @@ function getSelectedOptionValue(
   }
 
   return action.selected_option?.value;
+}
+
+function getSelectedOptionLabel(
+  action:
+    | BlockAction["actions"][number]
+    | ViewSubmitAction["view"]["state"]["values"][string][string]
+    | undefined
+): string | undefined {
+  if (!action || !("selected_option" in action)) {
+    return undefined;
+  }
+
+  const selectedOption = action.selected_option;
+  const text = selectedOption?.text?.text?.trim();
+  const description =
+    selectedOption && "description" in selectedOption ? selectedOption.description?.text?.trim() : undefined;
+
+  if (text && description) {
+    return `${text} ${description}`.trim();
+  }
+
+  return text || description || undefined;
 }
 
 function getPlainTextValue(
@@ -324,17 +347,13 @@ function getModalStateValues(stateValues?: ModalState) {
         ? parentEpicSelection.selected_option?.value ?? undefined
         : undefined,
     parentEpicLabel:
-      parentEpicSelection && "selected_option" in parentEpicSelection
-        ? parentEpicSelection.selected_option?.text?.text ?? undefined
-        : undefined,
+      getSelectedOptionLabel(parentEpicSelection),
     eodTaskKey:
       parentTaskSelection && "selected_option" in parentTaskSelection
         ? parentTaskSelection.selected_option?.value ?? undefined
         : undefined,
     eodTaskLabel:
-      parentTaskSelection && "selected_option" in parentTaskSelection
-        ? parentTaskSelection.selected_option?.text?.text ?? undefined
-        : undefined,
+      getSelectedOptionLabel(parentTaskSelection),
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     ),
@@ -1535,8 +1554,7 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(workflowKey);
     const state = getModalStateValues(body.view.state.values);
     const selectedParentEpicKey = getSelectedOptionValue(body.actions[0]);
-    const selectedParentEpicLabel =
-      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedParentEpicLabel = getSelectedOptionLabel(body.actions[0]);
     const nextState = clearEodTaskSelectionIfParentChanged(state, selectedParentEpicKey);
     const selectedIssueType = workflow.allowedIssueTypes.includes(nextState.selectedIssueType ?? "Bug")
       ? nextState.selectedIssueType
@@ -1709,11 +1727,7 @@ export function registerSlackHandlers(app: App): void {
 
       await ack({
         options: epics.map((epic) => ({
-          text: {
-            type: "plain_text",
-            text: `${epic.key} - ${epic.summary}`.slice(0, 75)
-          },
-          value: epic.key
+          ...buildIssueSelectOption(epic.key, epic.summary)
         }))
       });
 
@@ -1742,11 +1756,7 @@ export function registerSlackHandlers(app: App): void {
 
       await ack({
         options: tasks.map((task) => ({
-          text: {
-            type: "plain_text",
-            text: `${task.key} - ${task.summary}`.slice(0, 75)
-          },
-          value: task.key
+          ...buildIssueSelectOption(task.key, task.summary)
         }))
       });
 
@@ -1771,8 +1781,7 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(workflowKey);
     const state = getModalStateValues(body.view.state.values);
     const selectedTaskKey = getSelectedOptionValue(body.actions[0]);
-    const selectedTaskLabel =
-      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedTaskLabel = getSelectedOptionLabel(body.actions[0]);
     const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
       ? state.selectedIssueType
       : workflow.allowedIssueTypes[0];
@@ -1824,20 +1833,14 @@ export function registerSlackHandlers(app: App): void {
     const values = view.state.values;
     const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
-      values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
-      "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
-        ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.text?.text
-        : undefined;
+      getSelectedOptionLabel(values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction]);
     const parentEpicKey =
       values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
       "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
         ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.value
         : undefined;
     const parentTaskLabel =
-      values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
-      "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
-        ? values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction].selected_option?.text?.text
-        : undefined;
+      getSelectedOptionLabel(values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction]);
     const parentTaskKey =
       values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
       "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
