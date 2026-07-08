@@ -13,7 +13,23 @@ interface JiraSearchResponse {
 interface JiraIssueResponse {
   fields: {
     summary: string;
+    parent?: {
+      key: string;
+      fields?: {
+        summary?: string;
+      };
+    };
   };
+}
+
+export interface JiraIssueParentDetails {
+  key: string;
+  summary?: string;
+}
+
+export interface JiraIssueDetails {
+  summary: string;
+  parent?: JiraIssueParentDetails;
 }
 
 let jiraSearchPath: "/rest/api/3/search/jql" | "/rest/api/3/search" = "/rest/api/3/search/jql";
@@ -137,9 +153,22 @@ export async function searchChildTasks(
 }
 
 export async function getIssueSummary(issueKey: string): Promise<string> {
+  const result = await getIssueDetails(issueKey);
+  return result.summary;
+}
+
+export async function getIssueDetails(issueKey: string): Promise<JiraIssueDetails> {
   const result = await jiraRequest<JiraIssueResponse>(
-    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary`
+    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary,parent`
   );
 
-  return result.fields.summary;
+  return {
+    summary: result.fields.summary,
+    parent: result.fields.parent
+      ? {
+          key: result.fields.parent.key,
+          summary: result.fields.parent.fields?.summary
+        }
+      : undefined
+  };
 }

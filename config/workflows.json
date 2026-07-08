@@ -11,7 +11,7 @@
     "label": "UAE Inspection Mobilization",
     "jiraProjectKey": "UIM",
     "allowedIssueTypes": ["Bug", "EOD Report"],
-    "epicSearchJql": "project = UIM AND issuetype = Task",
+    "epicSearchJql": "project = UIM AND issuetype = Task AND status NOT IN (\"Done\", \"Jobs Backlog (Pending Client Update)\")",
     "parentIssueType": "Task",
     "eodAssetSelectionMode": "parent_issue"
   },

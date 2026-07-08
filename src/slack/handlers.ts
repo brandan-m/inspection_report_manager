@@ -14,7 +14,7 @@ import {
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
-import { buildParentSearchJql, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
+import { buildParentSearchJql, getIssueDetails, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
 import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
   BlockerType,
@@ -437,6 +437,18 @@ function clearEodTaskSelectionIfParentChanged(
     eodTaskKey: undefined,
     eodTaskLabel: undefined
   };
+}
+
+async function resolveJiraParentKeyForSelectedInspection(input: {
+  workflow: ReturnType<typeof getWorkflowByKey>;
+  selectedInspectionKey: string;
+}): Promise<string | undefined> {
+  if (input.workflow.parentIssueType !== "Task") {
+    return input.selectedInspectionKey;
+  }
+
+  const selectedIssue = await getIssueDetails(input.selectedInspectionKey);
+  return selectedIssue.parent?.key;
 }
 
 function formatJiraErrorMessage(error: unknown): string {
@@ -2336,6 +2348,10 @@ export function registerSlackHandlers(app: App): void {
         let selectedParentTaskKey: string | undefined;
         let resolvedParentTaskLabel: string | undefined;
         let parentTaskSummary: string | undefined;
+        const jiraParentKey = await resolveJiraParentKeyForSelectedInspection({
+          workflow,
+          selectedInspectionKey: parentEpicKey
+        });
 
         if (requiresSeparateAssetTask) {
           if (!parentTaskKey) {
@@ -2363,6 +2379,7 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
+          jiraParentKey,
           parentTaskKey: selectedParentTaskKey,
           parentTaskLabel: resolvedParentTaskLabel,
           parentTaskSummary,
@@ -2413,6 +2430,10 @@ export function registerSlackHandlers(app: App): void {
         workflow,
         issueType: selectedIssueType,
         parentEpicKey,
+        jiraParentKey: await resolveJiraParentKeyForSelectedInspection({
+          workflow,
+          selectedInspectionKey: parentEpicKey
+        }),
         summary: issueSummary,
         details: issueDetails,
         descriptionContent,
@@ -2422,6 +2443,23 @@ export function registerSlackHandlers(app: App): void {
       });
 
       logger.info(`Created Jira issue ${issue.key}`);
+
+      if (workflow.parentIssueType === "Task") {
+        try {
+          await linkIssuesByRelationship({
+            issueKey: issue.key,
+            relatedIssueKey: parentEpicKey,
+            relationshipText: "Connects to"
+          });
+          logger.info(`Linked Jira issue ${issue.key} to inspection task ${parentEpicKey} as "Connects to".`);
+        } catch (error) {
+          logger.warn(
+            `Could not link Jira issue ${issue.key} to inspection task ${parentEpicKey}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
 
       const confirmationMessage = buildIssueConfirmationMessage({
         issueType: selectedIssueType,
@@ -2602,6 +2640,7 @@ export function registerSlackHandlers(app: App): void {
         workflow,
         issueType: "EOD Report",
         parentEpicKey: context.parentEpicKey,
+        jiraParentKey: context.jiraParentKey,
         summary,
         details,
         descriptionContent: buildEodDescriptionContent(context, {
@@ -2615,17 +2654,21 @@ export function registerSlackHandlers(app: App): void {
         requesterName: body.user.id
       });
 
-      if (context.parentTaskKey) {
+      const relatedInspectionIssueKey = context.parentTaskKey ?? (workflow.parentIssueType === "Task" ? context.parentEpicKey : undefined);
+
+      if (relatedInspectionIssueKey) {
         try {
           await linkIssuesByRelationship({
             issueKey: issue.key,
-            relatedIssueKey: context.parentTaskKey,
+            relatedIssueKey: relatedInspectionIssueKey,
             relationshipText: "Connects to"
           });
-          logger.info(`Linked EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey} as "Connects to".`);
+          logger.info(
+            `Linked EOD Jira issue ${issue.key} to related inspection issue ${relatedInspectionIssueKey} as "Connects to".`
+          );
         } catch (error) {
           logger.warn(
-            `Could not link EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey}: ${
+            `Could not link EOD Jira issue ${issue.key} to related inspection issue ${relatedInspectionIssueKey}: ${
               error instanceof Error ? error.message : String(error)
             }`
           );
