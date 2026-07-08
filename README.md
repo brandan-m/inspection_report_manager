@@ -14,7 +14,8 @@ Production deployment is triggered from a semver release tag after the repositor
 - Attaches the selected parent Jira issue
 - Copies optional Slack-uploaded screenshots and documents into both Slack follow-ups and the created Jira ticket
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
-- Posts a follow-up EOD thread alert to the data operations team when coverage reaches `80%` or higher
+- Posts a follow-up EOD thread alert to `@data_team` when coverage reaches `80%` or higher
+- Prompts for `Total # of Tubes` when the EOD asset type is `Boiler`, then uses scanned tubes against that total for `@data_team` alerts
 - Optionally posts a confirmation message to a Slack test channel
 - Supports workflow-specific required fields, such as the `Reporting/Job Board` Bug requirements
 
@@ -190,8 +191,9 @@ For a local smoke test:
   - EHS Task flows show the structured intake instead of the generic details box
   - EOD flows create a thread in the same Slack channel where the workflow was launched
   - The root EOD thread message shows whether the thread is still active or has been manually closed out
-  - EOD flows post a data-operations alert in the same thread once `sqft. % done` is `80` or higher
-  - a `100%` EOD flow uses the completion wording instead of the nearing-completion wording
+  - EOD flows post an `@data_team` alert in the same thread once `sqft. % done` is `80` or higher
+  - Boiler EOD flows require a total tube count at thread creation and post the same alert once scanned tubes reach `80%` of that total
+  - a `100%` EOD flow, or a boiler EOD whose scanned tubes equal the total tube count, uses the completion wording instead of the nearing-completion wording
   - If the source channel cannot be determined, the workflow stops with a clear error instead of posting into a fallback channel
   - The root EOD thread message includes a manual closeout toggle so operators can mark scanning scope complete and visually close the thread in Slack
   - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
@@ -205,7 +207,7 @@ Deployment checklist:
 - store Slack and Jira secrets outside the repo
 - keep Socket Mode enabled, or switch to HTTPS-based event delivery
 - reinstall the Slack app after any scope or manifest changes
-- reinstall the Slack app after adding `usergroups:read` so the app can resolve the data operations user group mention
+- reinstall the Slack app after adding `usergroups:read` so the app can resolve the `@data_team` user group mention
 - reinstall the Slack app after adding `users:read` or `users:read.email` so Jira mention resolution can look up Slack users
 - reinstall the Slack app after adding `files:read` or `files:write` so modal uploads can be copied into Slack and Jira attachments
 - document the workflow config and board/project mappings in `config/workflows.json`

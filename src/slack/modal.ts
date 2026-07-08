@@ -279,6 +279,7 @@ export interface ModalStateValues {
   eodTaskKey?: string;
   eodTaskLabel?: string;
   eodAssetType?: EodAssetType;
+  eodTotalTubeCount?: string;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -570,9 +571,11 @@ export function buildCreateIssueModal(
       );
     }
 
-    blocks.push({
+    blocks.push(
+      {
         type: "input",
         block_id: CALLBACKS.eodAssetTypeBlock,
+        dispatch_action: true,
         element: {
           type: "static_select",
           action_id: CALLBACKS.eodAssetTypeAction,
@@ -587,7 +590,31 @@ export function buildCreateIssueModal(
           type: "plain_text",
           text: "Asset Type"
         }
-      });
+      },
+      ...(state.eodAssetType === "Boiler"
+        ? [
+            {
+              type: "input" as const,
+              block_id: CALLBACKS.eodTotalTubeCountBlock,
+              element: {
+                type: "number_input" as const,
+                action_id: CALLBACKS.eodTotalTubeCountAction,
+                is_decimal_allowed: false,
+                min_value: "1",
+                initial_value: state.eodTotalTubeCount,
+                placeholder: {
+                  type: "plain_text" as const,
+                  text: "Enter the total tube count for this boiler"
+                }
+              },
+              label: {
+                type: "plain_text" as const,
+                text: "Total # of Tubes"
+              }
+            }
+          ]
+        : [])
+    );
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
@@ -661,6 +688,10 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
       : undefined;
   const closedOutAt =
     typeof parsed.closedOutAt === "string" && parsed.closedOutAt.trim().length > 0 ? parsed.closedOutAt : undefined;
+  const totalTubeCount =
+    typeof parsed.totalTubeCount === "number" && Number.isFinite(parsed.totalTubeCount) && parsed.totalTubeCount > 0
+      ? parsed.totalTubeCount
+      : undefined;
 
   if (
     !parsed.workflowKey ||
@@ -681,6 +712,7 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     parentTaskLabel: parsed.parentTaskLabel,
     parentTaskSummary: parsed.parentTaskSummary,
     assetType: parsed.assetType,
+    totalTubeCount,
     requesterId: parsed.requesterId,
     channelId: parsed.channelId,
     threadTs: parsed.threadTs,
@@ -704,6 +736,10 @@ export function buildEodReportModal(context: EodThreadContext) {
   }
 
   summaryLines.push(`*Asset Type:* ${context.assetType}`);
+
+  if (usesTubeCount && typeof context.totalTubeCount === "number") {
+    summaryLines.push(`*Total Tubes:* ${context.totalTubeCount}`);
+  }
 
   return {
     type: "modal" as const,
@@ -767,6 +803,7 @@ export function buildEodReportModal(context: EodThreadContext) {
       {
         type: "input",
         block_id: CALLBACKS.eodScansCompletedBlock,
+        dispatch_action: true,
         element: {
           type: "number_input",
           action_id: CALLBACKS.eodScansCompletedAction,
@@ -786,6 +823,7 @@ export function buildEodReportModal(context: EodThreadContext) {
       {
         type: "input",
         block_id: CALLBACKS.eodScanningTimeBlock,
+        dispatch_action: true,
         element: {
           type: "number_input",
           action_id: CALLBACKS.eodScanningTimeAction,
@@ -833,6 +871,9 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
 
   lines.push(
     `Asset Type: ${context.assetType}`,
+    ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? [`Total Tubes: ${context.totalTubeCount}`]
+      : []),
     `Date: ${values.date}`,
     `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
@@ -857,6 +898,9 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
 
   content.push(
     jiraParagraph("Asset Type", context.assetType),
+    ...(usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? [jiraParagraph("Total Tubes", String(context.totalTubeCount))]
+      : []),
     jiraParagraph("Date", values.date),
     {
       type: "heading",
