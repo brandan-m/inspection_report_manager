@@ -10,7 +10,7 @@ Production deployment is triggered from a semver release tag after the repositor
 
 - Opens a Slack modal from a shortcut or App Home flow
 - Searches Jira Epics live for the selected workflow
-- Creates `Bug`, `EOD Report`, or `Task` issues in Jira
+- Supports Slack intake for `Bug`, `EOD Report`, `[TEST] Single Thread EOD`, and `Task` workflows
 - Attaches the selected Epic as the parent
 - Copies optional Slack-uploaded screenshots and documents into both Slack follow-ups and the created Jira ticket
 - Starts a Slack thread for `EOD Report` intake and collects the extended end-of-day field set before Jira creation
@@ -28,12 +28,14 @@ The repo currently includes:
 - Allowed work types:
   - `Bug`
   - `EOD Report`
+  - `[TEST] Single Thread EOD`
 - Label: `Reporting/Job Board`
 - Key: `reporting_job_board`
 - Jira project: `RB`
 - Allowed work types:
   - `Bug`
   - `EOD Report`
+  - `[TEST] Single Thread EOD`
 - Additional Bug fields:
   - `RUG Blocker Type`
   - `RUG Ops Downtime (hours)`
@@ -152,7 +154,8 @@ Create a Jira API token for the service account and confirm that:
 - the account can create issues in `RB`
 - the account can search Epics in `EHSJOB`
 - the account can create issues in `EHSJOB`
-- `Bug`, `EOD Report`, and `Task` are standard issue types under Epic in your Jira scheme
+- `Bug`, `EOD Report`, and `Task` are standard Jira issue types under Epic in your Jira scheme
+- `[TEST] Single Thread EOD` is a Slack-only intake mode that still creates Jira `EOD Report` tickets
 - any workflow-specific required fields are either present in the modal or no longer required in Jira
 
 The initial Epic search JQL is:
@@ -182,6 +185,7 @@ For a local smoke test:
   - If the source channel cannot be determined, the workflow stops with a clear error instead of posting into a fallback channel
   - The root EOD thread message includes a manual closeout toggle so operators can mark scanning scope complete and visually close the thread in Slack
   - The thread button opens the extended intake modal and creates the Jira `EOD Report` under the chosen Epic
+  - `[TEST] Single Thread EOD` starts one root thread for the Epic, moves asset selection into the thread-level `Generate EOD Report` modal, and rolls the latest asset progress plus report link into the root message
 
 ## Deployment Notes
 

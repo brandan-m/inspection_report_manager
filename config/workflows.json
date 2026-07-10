@@ -3,14 +3,14 @@
     "key": "api_data_delivery",
     "label": "API Data Delivery",
     "jiraProjectKey": "APIDD",
-    "allowedIssueTypes": ["Bug", "EOD Report"],
+    "allowedIssueTypes": ["Bug", "EOD Report", "[TEST] Single Thread EOD"],
     "epicSearchJql": "project = APIDD AND issuetype = Epic"
   },
   {
     "key": "reporting_job_board",
     "label": "Reporting/Job Board",
     "jiraProjectKey": "RB",
-    "allowedIssueTypes": ["Bug", "EOD Report"],
+    "allowedIssueTypes": ["Bug", "EOD Report", "[TEST] Single Thread EOD"],
     "epicSearchJql": "project = RB AND issuetype = Epic"
   },
   {

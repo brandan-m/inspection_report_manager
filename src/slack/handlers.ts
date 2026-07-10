@@ -19,11 +19,14 @@ import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
   BlockerType,
   EodAssetType,
+  SelectableIssueType,
   EhsFormValues,
   EodReportFormValues,
   EodThreadContext,
   JiraInlineNode,
-  EodYesNo
+  EodYesNo,
+  SingleThreadEodAssetState,
+  SingleThreadEodContext
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
@@ -31,8 +34,11 @@ import {
   buildEodReportSummary,
   buildCreateIssueModal,
   buildEodReportModal,
+  buildSingleThreadEodReportModal,
   buildEhsDescriptionContent,
   decodeEodThreadContext,
+  decodeSingleThreadEodContext,
+  encodeSingleThreadEodContext,
   formatEodProgressCodeValue,
   formatEodProgressValue,
   formatEodReportDetails,
@@ -43,6 +49,7 @@ import {
   requiresBugSpecificFields,
   selectedIssueTypeFromValue,
   shouldCollectEodInThread,
+  shouldUseSingleThreadEod,
   usesEhsSpecificFields
 } from "./modal.js";
 import { downloadSlackFile, shareSlackFile } from "./attachments.js";
@@ -249,14 +256,14 @@ function getSelectedWorkflowKeyFromSuggestion(body: BlockSuggestion): string {
 
 function getSelectedIssueTypeFromState(
   stateValues?: ViewSubmitAction["view"]["state"]["values"]
-): Exclude<"Bug" | "EOD Report" | "Task" | "Epic", "Epic"> {
+): SelectableIssueType {
   return selectedIssueTypeFromValue(
     getSelectedOptionValue(stateValues?.[CALLBACKS.issueTypeBlock]?.[CALLBACKS.issueTypeAction]) ??
       "Bug"
   );
 }
 
-function getDefaultIssueTypeForWorkflow(workflowKey: string) {
+function getDefaultIssueTypeForWorkflow(workflowKey: string): SelectableIssueType {
   return getWorkflowByKey(workflowKey).allowedIssueTypes[0];
 }
 
@@ -732,6 +739,93 @@ async function updateEodThreadRootMessage(client: App["client"], context: EodThr
   });
 }
 
+function buildSingleThreadEodAssetStatusLine(asset: SingleThreadEodAssetState): string {
+  const assetTask = buildLinkedJiraLabel(
+    asset.parentTaskKey,
+    asset.parentTaskSummary.trim() || asset.parentTaskKey
+  );
+  const progressStatus =
+    typeof asset.lastProgressValue === "number"
+      ? formatEodProgressCodeValue({ assetType: asset.assetType }, asset.lastProgressValue)
+      : "Pending";
+  const reportStatus = asset.reportIssueKey
+    ? buildLinkedJiraLabel(asset.reportIssueKey, asset.reportIssueKey)
+    : "Pending";
+
+  return `• ${assetTask} | ${escapeSlackText(asset.assetType)} | ${progressStatus} | ${reportStatus}`;
+}
+
+function buildSingleThreadEodRootMessage(context: SingleThreadEodContext) {
+  const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
+  const assetLines =
+    context.assets.length > 0
+      ? context.assets.map((asset) => buildSingleThreadEodAssetStatusLine(asset)).join("\n")
+      : "_No asset reports submitted yet._";
+
+  return {
+    text: `[TEST] Single Thread EOD started for ${context.parentEpicKey}.`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text:
+            "*[TEST] Single Thread EOD*\n" +
+            `*Parent Inspection:* ${parentInspection}\n` +
+            "Use this thread to file asset-level EOD reports for this parent inspection."
+        }
+      },
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text:
+            "*Assets*\n" +
+            "_Format: Asset | Asset Type | Latest Progress | Latest EOD Report_\n" +
+            assetLines
+        }
+      },
+      {
+        type: "actions" as const,
+        elements: [
+          {
+            type: "button" as const,
+            action_id: CALLBACKS.singleThreadEodStartButton,
+            text: {
+              type: "plain_text" as const,
+              text: "Generate EOD Report"
+            },
+            value: encodeSingleThreadEodContext(context)
+          }
+        ]
+      }
+    ]
+  };
+}
+
+async function updateSingleThreadEodRootMessage(client: App["client"], context: SingleThreadEodContext) {
+  const message = buildSingleThreadEodRootMessage(context);
+
+  await client.chat.update({
+    channel: context.channelId,
+    ts: context.threadTs,
+    text: message.text,
+    blocks: message.blocks
+  });
+}
+
+function upsertSingleThreadEodAssetState(
+  context: SingleThreadEodContext,
+  asset: SingleThreadEodAssetState
+): SingleThreadEodContext {
+  const remainingAssets = context.assets.filter((item) => item.parentTaskKey !== asset.parentTaskKey);
+
+  return {
+    ...context,
+    assets: [asset, ...remainingAssets]
+  };
+}
+
 function buildEodCompletionMessage(input: {
   issueKey: string;
   issueSummary: string;
@@ -1135,6 +1229,29 @@ async function createEodThread(
   return threadContext;
 }
 
+async function createSingleThreadEodRootThread(
+  client: App["client"],
+  context: Omit<SingleThreadEodContext, "threadTs" | "assets">
+) {
+  const starter = await client.chat.postMessage({
+    channel: context.channelId,
+    text: `[TEST] Single Thread EOD started for ${context.parentEpicKey}.`
+  });
+
+  if (!starter.ts) {
+    throw new Error("Slack did not return a thread timestamp for the single-thread EOD intake.");
+  }
+
+  const threadContext: SingleThreadEodContext = {
+    ...context,
+    threadTs: starter.ts,
+    assets: []
+  };
+  await updateSingleThreadEodRootMessage(client, threadContext);
+
+  return threadContext;
+}
+
 function summarizeCreateIssueSubmission(input: {
   workflowKey: string;
   jiraProjectKey: string;
@@ -1147,6 +1264,7 @@ function summarizeCreateIssueSubmission(input: {
   blockerTypeValue?: string;
   downtimeValue: string;
   isEod: boolean;
+  isSingleThreadEod: boolean;
   isEhsTask: boolean;
 }) {
   return JSON.stringify({
@@ -1161,6 +1279,7 @@ function summarizeCreateIssueSubmission(input: {
     blockerType: input.blockerTypeValue ?? null,
     downtimeValue: input.downtimeValue || null,
     isEod: input.isEod,
+    isSingleThreadEod: input.isSingleThreadEod,
     isEhsTask: input.isEhsTask
   });
 }
@@ -1652,6 +1771,37 @@ export function registerSlackHandlers(app: App): void {
     logger.info(`Opened EOD intake modal for thread ${context.threadTs}`);
   });
 
+  app.action(CALLBACKS.singleThreadEodStartButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("trigger_id" in body)) {
+      logger.error("Single-thread EOD start action did not include a trigger_id.");
+      return;
+    }
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("Single-thread EOD start action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("Single-thread EOD start action did not include thread context.");
+      return;
+    }
+
+    const context = decodeSingleThreadEodContext(contextValue);
+
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildSingleThreadEodReportModal(context)
+    });
+
+    logger.info(`Opened single-thread EOD intake modal for thread ${context.threadTs}`);
+  });
+
   app.action(CALLBACKS.eodCloseoutButton, async ({ ack, body, client, logger }) => {
     await ack();
 
@@ -1755,6 +1905,37 @@ export function registerSlackHandlers(app: App): void {
       );
     } catch (error) {
       logger.error(`Failed to load child Task options for query "${body.value ?? ""}".`, error);
+      await ack({ options: [] });
+    }
+  });
+
+  app.options(CALLBACKS.singleThreadEodTaskAction, async ({ ack, body, logger }) => {
+    try {
+      if (!body.view?.private_metadata) {
+        await ack({ options: [] });
+        return;
+      }
+
+      const context = decodeSingleThreadEodContext(body.view.private_metadata);
+      const workflow = getWorkflowByKey(context.workflowKey);
+      const query = (body.value ?? "").trim();
+      const tasks = await searchChildTasks(workflow, context.parentEpicKey, query);
+
+      await ack({
+        options: tasks.map((task) => ({
+          text: {
+            type: "plain_text",
+            text: `${task.key} - ${task.summary}`.slice(0, 75)
+          },
+          value: task.key
+        }))
+      });
+
+      logger.info(
+        `Returned ${tasks.length} single-thread child Task options for parent ${context.parentEpicKey} in workflow ${workflow.key}`
+      );
+    } catch (error) {
+      logger.error(`Failed to load single-thread child Task options for query "${body.value ?? ""}".`, error);
       await ack({ options: [] });
     }
   });
@@ -1871,7 +2052,9 @@ export function registerSlackHandlers(app: App): void {
     );
 
     const selectedIssueType = issueTypeValue ? selectedIssueTypeFromValue(issueTypeValue) : undefined;
-    const isEod = selectedIssueType === "EOD Report";
+    const isThreadPerAssetEod = selectedIssueType ? shouldCollectEodInThread(selectedIssueType) : false;
+    const isSingleThreadEod = selectedIssueType ? shouldUseSingleThreadEod(selectedIssueType) : false;
+    const isEod = isThreadPerAssetEod || isSingleThreadEod;
     const isEhsTask = selectedIssueType ? usesEhsSpecificFields(workflow, selectedIssueType) : false;
     const submissionSummary = summarizeCreateIssueSubmission({
       workflowKey: workflow.key,
@@ -1885,6 +2068,7 @@ export function registerSlackHandlers(app: App): void {
       blockerTypeValue,
       downtimeValue,
       isEod,
+      isSingleThreadEod,
       isEhsTask
     });
 
@@ -1947,7 +2131,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (isEod && !selectedThreadAssetType) {
+    if (isThreadPerAssetEod && !selectedThreadAssetType) {
       await ack({
         response_action: "errors",
         errors: {
@@ -1959,7 +2143,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (isEod && !parentTaskKey) {
+    if (isThreadPerAssetEod && !parentTaskKey) {
       await ack({
         response_action: "errors",
         errors: {
@@ -2056,7 +2240,7 @@ export function registerSlackHandlers(app: App): void {
     );
 
     try {
-      if (isEod) {
+      if (isThreadPerAssetEod) {
         if (!parentTaskKey) {
           throw new Error("Asset task is required for EOD intake.");
         }
@@ -2095,6 +2279,36 @@ export function registerSlackHandlers(app: App): void {
         return;
       }
 
+      if (isSingleThreadEod) {
+        logger.info(
+          `Creating single-thread EOD intake root ${JSON.stringify({
+            workflowKey: workflow.key,
+            userId: body.user.id,
+            parentEpicKey,
+            channelId: getEodChannelId(channelId)
+          })}`
+        );
+        const rootThreadContext = await createSingleThreadEodRootThread(client, {
+          workflowKey: workflow.key,
+          parentEpicKey,
+          parentEpicLabel,
+          channelId: getEodChannelId(channelId)
+        });
+
+        await trySendDirectMessage(
+          client,
+          body.user.id,
+          `Started [TEST] Single Thread EOD for ${parentEpicKey} in <#${rootThreadContext.channelId}>. Open the thread and click "Generate EOD Report" to file asset updates.`,
+          undefined,
+          logger
+        );
+
+        logger.info(
+          `Started single-thread EOD intake root ${rootThreadContext.threadTs} for ${parentEpicKey}`
+        );
+        return;
+      }
+
       let issueSummary = summary ?? "";
       let issueDetails = details ?? "";
       let descriptionContent = undefined;
@@ -2120,9 +2334,10 @@ export function registerSlackHandlers(app: App): void {
         })}`
       );
 
+      const jiraIssueType = selectedIssueType === "Task" ? "Task" : selectedIssueType === "Bug" ? "Bug" : "EOD Report";
       const issue = await createIssue({
         workflow,
-        issueType: selectedIssueType,
+        issueType: jiraIssueType,
         parentEpicKey,
         summary: issueSummary,
         details: issueDetails,
@@ -2445,6 +2660,294 @@ export function registerSlackHandlers(app: App): void {
       );
 
       logger.info(`Created EOD Jira issue ${issue.key} for thread ${context.threadTs}`);
+    } catch (error) {
+      logger.error(error);
+
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Could not create the Jira issue: ${formatJiraErrorMessage(error)}`
+      });
+
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        `Could not create Jira issue: ${formatJiraErrorMessage(error)}`,
+        undefined,
+        logger
+      );
+    }
+  });
+
+  app.view(CALLBACKS.singleThreadEodReportView, async ({ ack, body, client, logger, view }) => {
+    let context: SingleThreadEodContext;
+    const fullDayOverviewValue = getRichTextValue(
+      view.state.values,
+      CALLBACKS.eodFullDayOverviewBlock,
+      CALLBACKS.eodFullDayOverviewAction
+    );
+    const attachmentFileIds = getSelectedFileIds(
+      view.state.values,
+      CALLBACKS.eodAttachmentsBlock,
+      CALLBACKS.eodAttachmentsAction
+    );
+    const parentTaskLabel =
+      view.state.values[CALLBACKS.singleThreadEodTaskBlock]?.[CALLBACKS.singleThreadEodTaskAction] &&
+      "selected_option" in view.state.values[CALLBACKS.singleThreadEodTaskBlock][CALLBACKS.singleThreadEodTaskAction]
+        ? view.state.values[CALLBACKS.singleThreadEodTaskBlock][CALLBACKS.singleThreadEodTaskAction].selected_option
+            ?.text?.text
+        : undefined;
+    const parentTaskKey =
+      view.state.values[CALLBACKS.singleThreadEodTaskBlock]?.[CALLBACKS.singleThreadEodTaskAction] &&
+      "selected_option" in view.state.values[CALLBACKS.singleThreadEodTaskBlock][CALLBACKS.singleThreadEodTaskAction]
+        ? view.state.values[CALLBACKS.singleThreadEodTaskBlock][CALLBACKS.singleThreadEodTaskAction].selected_option
+            ?.value
+        : undefined;
+    const assetType = parseEodAssetType(
+      getSelectedOptionValue(
+        view.state.values[CALLBACKS.singleThreadEodAssetTypeBlock]?.[CALLBACKS.singleThreadEodAssetTypeAction]
+      )
+    );
+
+    try {
+      context = decodeSingleThreadEodContext(view.private_metadata);
+    } catch (error) {
+      logger.error(error);
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.singleThreadEodTaskBlock]:
+            "Could not load the thread context. Please start the single-thread EOD intake again."
+        }
+      });
+      return;
+    }
+
+    const fieldErrors: Record<string, string> = {};
+
+    if (!parentTaskKey) {
+      fieldErrors[CALLBACKS.singleThreadEodTaskBlock] = "Please choose an asset task.";
+    }
+
+    if (!assetType) {
+      fieldErrors[CALLBACKS.singleThreadEodAssetTypeBlock] = "Please choose an asset type.";
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      await ack({
+        response_action: "errors",
+        errors: fieldErrors
+      });
+      return;
+    }
+
+    const selectedParentTaskKey = parentTaskKey as string;
+    const selectedAssetType = assetType as EodAssetType;
+    const validation = validateEodForm(view.state.values, { assetType: selectedAssetType });
+
+    if (!validation.success) {
+      logger.info(
+        `Rejecting single-thread EOD report submission for validation errors ${JSON.stringify({
+          workflowKey: context.workflowKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          errors: validation.errors
+        })}`
+      );
+      await ack({
+        response_action: "errors",
+        errors: validation.errors
+      });
+      return;
+    }
+
+    await ack();
+    logger.info(
+      `Accepted single-thread EOD report submission ${JSON.stringify({
+        workflowKey: context.workflowKey,
+        userId: body.user.id,
+        threadTs: context.threadTs,
+        channelId: context.channelId,
+        parentEpicKey: context.parentEpicKey,
+        parentTaskKey: selectedParentTaskKey
+      })}`
+    );
+
+    try {
+      const workflow = getWorkflowByKey(context.workflowKey);
+      const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
+      const assetContext: EodThreadContext = {
+        workflowKey: context.workflowKey,
+        parentEpicKey: context.parentEpicKey,
+        parentEpicLabel: context.parentEpicLabel,
+        parentTaskKey: selectedParentTaskKey,
+        parentTaskLabel,
+        parentTaskSummary,
+        assetType: selectedAssetType,
+        requesterId: body.user.id,
+        channelId: context.channelId,
+        threadTs: context.threadTs
+      };
+      const summary = buildEodReportSummary(assetContext, validation.values);
+      const details = formatEodReportDetails(assetContext, validation.values);
+      const resolveSlackUserMention = createSlackToJiraMentionResolver(client, logger);
+      const resolveSlackUserGroupMention = createSlackUserGroupMentionResolver(client, logger);
+      const resolvedFullDayOverviewContent = await richTextToResolvedJiraDocNodes(fullDayOverviewValue, {
+        resolveUserMention: resolveSlackUserMention
+      });
+      const requesterContent = [await resolveSlackUserMention(body.user.id)];
+
+      logger.info(
+        `Creating single-thread EOD Jira issue ${JSON.stringify({
+          workflowKey: workflow.key,
+          jiraProjectKey: workflow.jiraProjectKey,
+          userId: body.user.id,
+          threadTs: context.threadTs,
+          parentEpicKey: context.parentEpicKey,
+          parentTaskKey: selectedParentTaskKey,
+          summaryLength: summary.trim().length,
+          detailsLength: details.trim().length
+        })}`
+      );
+
+      const issue = await createIssue({
+        workflow,
+        issueType: "EOD Report",
+        parentEpicKey: context.parentEpicKey,
+        summary,
+        details,
+        descriptionContent: buildEodDescriptionContent(assetContext, {
+          ...validation.values,
+          fullDayOverviewContent:
+            resolvedFullDayOverviewContent.length > 0
+              ? resolvedFullDayOverviewContent
+              : validation.values.fullDayOverviewContent
+        }),
+        requesterContent,
+        requesterName: body.user.id
+      });
+
+      try {
+        await linkIssuesByRelationship({
+          issueKey: issue.key,
+          relatedIssueKey: selectedParentTaskKey,
+          relationshipText: "Connects to"
+        });
+        logger.info(
+          `Linked single-thread EOD Jira issue ${issue.key} to asset task ${selectedParentTaskKey}.`
+        );
+      } catch (error) {
+        logger.warn(
+          `Could not link single-thread EOD Jira issue ${issue.key} to asset task ${selectedParentTaskKey}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+
+      const updatedRootContext = upsertSingleThreadEodAssetState(context, {
+        parentTaskKey: selectedParentTaskKey,
+        parentTaskSummary,
+        assetType: selectedAssetType,
+        lastProgressValue: validation.values.numberOfScansCompleted,
+        reportIssueKey: issue.key
+      });
+
+      await updateSingleThreadEodRootMessage(client, updatedRootContext);
+
+      const completionMessage = buildEodCompletionMessage({
+        issueKey: issue.key,
+        issueSummary: summary,
+        requesterId: body.user.id,
+        context: assetContext,
+        values: validation.values
+      });
+
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        ...completionMessage
+      });
+
+      if (attachmentFileIds.length > 0) {
+        try {
+          const attachmentSync = await syncAttachmentsForIssue(
+            client,
+            {
+              fileIds: attachmentFileIds,
+              issueKey: issue.key,
+              slackChannelId: context.channelId,
+              slackThreadTs: context.threadTs
+            },
+            logger
+          );
+
+          logger.info(
+            `Synced single-thread EOD attachments for Jira issue ${issue.key}: ${JSON.stringify({
+              attempted: attachmentSync.attempted,
+              downloadFailures: attachmentSync.downloadFailures,
+              jiraFailures: attachmentSync.jiraFailures,
+              slackFailures: attachmentSync.slackFailures
+            })}`
+          );
+
+          if (
+            attachmentSync.downloadFailures > 0 ||
+            attachmentSync.jiraFailures > 0 ||
+            attachmentSync.slackFailures > 0
+          ) {
+            await client.chat.postMessage({
+              channel: context.channelId,
+              thread_ts: context.threadTs,
+              text:
+                `Jira issue ${issue.key} was created, but ${String(
+                  attachmentSync.downloadFailures + attachmentSync.jiraFailures + attachmentSync.slackFailures
+                )} attachment copy step(s) failed. Please review the Slack thread and Jira ticket attachments.`
+            });
+          }
+        } catch (error) {
+          logger.warn(
+            `Unexpected single-thread EOD attachment sync failure for Jira issue ${issue.key}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          await client.chat.postMessage({
+            channel: context.channelId,
+            thread_ts: context.threadTs,
+            text:
+              `Jira issue ${issue.key} was created, but the attachment sync did not finish. Please review the Slack thread and Jira ticket attachments.`
+          });
+        }
+      }
+
+      const dataOperationsAlert = await buildEodDataOperationsAlertMessage({
+        context: assetContext,
+        values: validation.values,
+        resolveUserGroupMention: resolveSlackUserGroupMention
+      });
+
+      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
+        logger.warn(
+          `Skipping single-thread EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
+        );
+      }
+
+      if (dataOperationsAlert) {
+        await client.chat.postMessage({
+          channel: context.channelId,
+          thread_ts: context.threadTs,
+          ...dataOperationsAlert
+        });
+      }
+
+      await trySendDirectMessage(
+        client,
+        body.user.id,
+        `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
+        undefined,
+        logger
+      );
+
+      logger.info(`Created single-thread EOD Jira issue ${issue.key} for thread ${context.threadTs}`);
     } catch (error) {
       logger.error(error);
 

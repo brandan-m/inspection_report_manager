@@ -1,4 +1,5 @@
-export type SupportedIssueType = "Bug" | "EOD Report" | "Task" | "Epic";
+export type JiraIssueType = "Bug" | "EOD Report" | "Task" | "Epic";
+export type SupportedIssueType = JiraIssueType | "[TEST] Single Thread EOD";
 export type SelectableIssueType = Exclude<SupportedIssueType, "Epic">;
 export type BlockerType = "Customer" | "Operations" | "Environmental" | "Other";
 export type EodAssetType =
@@ -114,7 +115,7 @@ export type JiraDocNode =
 
 export interface CreateIssueInput {
   workflow: WorkflowDefinition;
-  issueType: SelectableIssueType;
+  issueType: Exclude<JiraIssueType, "Epic">;
   parentEpicKey: string;
   summary: string;
   details: string;
@@ -161,6 +162,23 @@ export interface EodThreadContext {
   lastCoveragePercent?: number;
   closedOutByUserId?: string;
   closedOutAt?: string;
+}
+
+export interface SingleThreadEodAssetState {
+  parentTaskKey: string;
+  parentTaskSummary: string;
+  assetType: EodAssetType;
+  lastProgressValue?: number;
+  reportIssueKey?: string;
+}
+
+export interface SingleThreadEodContext {
+  workflowKey: string;
+  parentEpicKey: string;
+  parentEpicLabel?: string;
+  channelId: string;
+  threadTs: string;
+  assets: SingleThreadEodAssetState[];
 }
 
 export interface EhsFormValues {
