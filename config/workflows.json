@@ -3,7 +3,7 @@
     "key": "reporting_job_board",
     "label": "Reporting/Job Board",
     "jiraProjectKey": "RB",
-    "allowedIssueTypes": ["Bug", "EOD Report"],
+    "allowedIssueTypes": ["Bug", "EOD Report", "[TEST] Single Thread EOD"],
     "epicSearchJql": "project = RB AND issuetype = Epic"
   },
   {

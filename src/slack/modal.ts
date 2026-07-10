@@ -9,6 +9,8 @@ import {
 import type {
   BlockerType,
   EodAssetType,
+  SingleThreadEodAssetState,
+  SingleThreadEodContext,
   EodThreadLifecycleStatus,
   EhsFormValues,
   JiraDocNode,
@@ -382,6 +384,14 @@ export function shouldCollectEodInThread(issueType: SelectableIssueType): boolea
   return issueType === "EOD Report";
 }
 
+export function shouldUseSingleThreadEod(issueType: SelectableIssueType): boolean {
+  return issueType === "[TEST] Single Thread EOD";
+}
+
+function shouldStartEodIntake(issueType: SelectableIssueType): boolean {
+  return shouldCollectEodInThread(issueType) || shouldUseSingleThreadEod(issueType);
+}
+
 export function buildCreateIssueModal(
   defaultWorkflow: WorkflowDefinition,
   state: ModalStateValues = {},
@@ -615,6 +625,15 @@ export function buildCreateIssueModal(
           ]
         : [])
     );
+  } else if (shouldUseSingleThreadEod(selectedIssueType)) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text:
+          "*[TEST] Single Thread EOD*\nThis creates one root Slack thread for the selected Parent Epic. Use the `Generate EOD Report` button in that thread to file asset-level EOD reports."
+      }
+    });
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
@@ -649,7 +668,8 @@ export function buildCreateIssueModal(
     callback_id: CALLBACKS.createIssueView,
     private_metadata: JSON.stringify({
       workflowKey: metadata.workflowKey ?? defaultWorkflow.key,
-      channelId: metadata.channelId
+      channelId: metadata.channelId,
+      requireChannelSelection: metadata.requireChannelSelection
     }),
     title: {
       type: "plain_text" as const,
@@ -657,7 +677,7 @@ export function buildCreateIssueModal(
     },
     submit: {
       type: "plain_text" as const,
-      text: shouldCollectEodInThread(selectedIssueType) ? "Start Intake" : "Create"
+      text: shouldStartEodIntake(selectedIssueType) ? "Start Intake" : "Create"
     },
     close: {
       type: "plain_text" as const,
@@ -669,6 +689,54 @@ export function buildCreateIssueModal(
 
 export function encodeEodThreadContext(context: EodThreadContext): string {
   return JSON.stringify(context);
+}
+
+export function encodeSingleThreadEodContext(context: SingleThreadEodContext): string {
+  return JSON.stringify({
+    wk: context.workflowKey,
+    pe: context.parentEpicKey,
+    pl: context.parentEpicLabel,
+    ch: context.channelId,
+    ts: context.threadTs,
+    a: context.assets.map((asset) => ({
+      k: asset.parentTaskKey,
+      s: asset.parentTaskSummary,
+      t: asset.assetType,
+      p: asset.lastProgressValue,
+      r: asset.reportIssueKey
+    }))
+  });
+}
+
+function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetState | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const asset = value as {
+    k?: unknown;
+    s?: unknown;
+    t?: unknown;
+    p?: unknown;
+    r?: unknown;
+  };
+
+  if (
+    typeof asset.k !== "string" ||
+    typeof asset.s !== "string" ||
+    asset.s.trim().length === 0 ||
+    !parseEodAssetType(typeof asset.t === "string" ? asset.t : undefined)
+  ) {
+    return undefined;
+  }
+
+  return {
+    parentTaskKey: asset.k,
+    parentTaskSummary: asset.s,
+    assetType: asset.t as EodAssetType,
+    lastProgressValue: typeof asset.p === "number" && Number.isFinite(asset.p) ? asset.p : undefined,
+    reportIssueKey: typeof asset.r === "string" && asset.r.trim().length > 0 ? asset.r : undefined
+  };
 }
 
 export function decodeEodThreadContext(value: string): EodThreadContext {
@@ -722,6 +790,41 @@ export function decodeEodThreadContext(value: string): EodThreadContext {
     lastCoveragePercent,
     closedOutByUserId,
     closedOutAt
+  };
+}
+
+export function decodeSingleThreadEodContext(value: string): SingleThreadEodContext {
+  const parsed = JSON.parse(value) as {
+    wk?: unknown;
+    pe?: unknown;
+    pl?: unknown;
+    ch?: unknown;
+    ts?: unknown;
+    a?: unknown;
+  };
+
+  if (
+    typeof parsed.wk !== "string" ||
+    typeof parsed.pe !== "string" ||
+    typeof parsed.ch !== "string" ||
+    typeof parsed.ts !== "string"
+  ) {
+    throw new Error("Single-thread EOD context is incomplete.");
+  }
+
+  const assets = Array.isArray(parsed.a)
+    ? parsed.a
+        .map((asset) => decodeSingleThreadEodAssetState(asset))
+        .filter((asset): asset is SingleThreadEodAssetState => Boolean(asset))
+    : [];
+
+  return {
+    workflowKey: parsed.wk,
+    parentEpicKey: parsed.pe,
+    parentEpicLabel: typeof parsed.pl === "string" && parsed.pl.trim().length > 0 ? parsed.pl : undefined,
+    channelId: parsed.ch,
+    threadTs: parsed.ts,
+    assets
   };
 }
 
@@ -862,6 +965,160 @@ export function buildEodReportModal(context: EodThreadContext) {
   };
 }
 
+export function buildSingleThreadEodReportModal(context: SingleThreadEodContext) {
+  return {
+    type: "modal" as const,
+    callback_id: CALLBACKS.singleThreadEodReportView,
+    private_metadata: encodeSingleThreadEodContext(context),
+    title: {
+      type: "plain_text" as const,
+      text: "EOD Intake"
+    },
+    submit: {
+      type: "plain_text" as const,
+      text: "Submit"
+    },
+    close: {
+      type: "plain_text" as const,
+      text: "Cancel"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `*Parent Inspection:* ${context.parentEpicLabel ?? context.parentEpicKey}\n` +
+            "*Choose the asset and asset type for this report.*"
+        }
+      },
+      {
+        type: "section",
+        block_id: CALLBACKS.singleThreadEodTaskBlock,
+        text: {
+          type: "mrkdwn",
+          text: "*Asset Task*"
+        },
+        accessory: {
+          type: "external_select",
+          action_id: CALLBACKS.singleThreadEodTaskAction,
+          min_query_length: 0,
+          placeholder: {
+            type: "plain_text",
+            text: "Search child Tasks under the parent Epic"
+          }
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.singleThreadEodAssetTypeBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.singleThreadEodAssetTypeAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose asset type"
+          },
+          options: simpleOptions(EOD_ASSET_TYPES)
+        },
+        label: {
+          type: "plain_text",
+          text: "Asset Type"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodDateBlock,
+        element: {
+          type: "datepicker",
+          action_id: CALLBACKS.eodDateAction
+        },
+        label: {
+          type: "plain_text",
+          text: "Date"
+        }
+      },
+      richTextInputBlock(
+        CALLBACKS.eodFullDayOverviewBlock,
+        CALLBACKS.eodFullDayOverviewAction,
+        "Full Day Overview",
+        "Add timing, crew movement, and operational notes for the day"
+      ),
+      {
+        type: "input",
+        block_id: CALLBACKS.eodJsaSubmittedBlock,
+        element: {
+          type: "static_select",
+          action_id: CALLBACKS.eodJsaSubmittedAction,
+          placeholder: {
+            type: "plain_text",
+            text: "Choose status"
+          },
+          options: simpleOptions(EOD_YES_NO)
+        },
+        label: {
+          type: "plain_text",
+          text: "JSA Submitted"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodScansCompletedBlock,
+        element: {
+          type: "number_input",
+          action_id: CALLBACKS.eodScansCompletedAction,
+          is_decimal_allowed: false,
+          min_value: "0",
+          placeholder: {
+            type: "plain_text",
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text",
+          text: "Progress (% complete or # of Tubes Scanned for Boilers)"
+        }
+      },
+      {
+        type: "input",
+        block_id: CALLBACKS.eodScanningTimeBlock,
+        element: {
+          type: "number_input",
+          action_id: CALLBACKS.eodScanningTimeAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          placeholder: {
+            type: "plain_text",
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text",
+          text: "Total Scanning Time (Hours)"
+        }
+      },
+      plainTextInputBlock(
+        CALLBACKS.eodNotesBlock,
+        CALLBACKS.eodNotesAction,
+        "Notes (optional)",
+        "Additional notes",
+        undefined,
+        true,
+        true
+      ),
+      attachmentHelpBlock(
+        "single_thread_eod_attachments_help",
+        "*Attachments (optional)*\nUpload photos, scans, or supporting documents to include in this Slack thread and on the Jira issue."
+      ),
+      attachmentInputBlock(
+        CALLBACKS.eodAttachmentsBlock,
+        CALLBACKS.eodAttachmentsAction,
+        "Attachments (optional)"
+      )
+    ]
+  };
+}
+
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const progressFieldLabel = getEodProgressFieldLabel(context);
   const lines = [`Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`];
@@ -948,11 +1205,29 @@ export function buildEodReportSummary(context: EodThreadContext, values: EodRepo
 }
 
 export function selectedIssueTypeFromValue(value: string): Exclude<SupportedIssueType, "Epic"> {
-  if (value !== "Bug" && value !== "EOD Report" && value !== "Task") {
+  if (value !== "Bug" && value !== "EOD Report" && value !== "[TEST] Single Thread EOD" && value !== "Task") {
     throw new Error(`Unsupported issue type: ${value}`);
   }
 
   return value;
+}
+
+function parseEodAssetType(value?: string): EodAssetType | undefined {
+  return value === "Kiln" ||
+    value === "Hood" ||
+    value === "Tank" ||
+    value === "Drum" ||
+    value === "Vessel" ||
+    value === "Piping" ||
+    value === "SDA" ||
+    value === "Silo" ||
+    value === "Boiler" ||
+    value === "Heat Exchangers" ||
+    value === "Stacks" ||
+    value === "Spheres" ||
+    value === "Towers"
+    ? value
+    : undefined;
 }
 
 export function usesEhsSpecificFields(
