@@ -1,4 +1,4 @@
-import type { EpicOption, IssueOption, WorkflowDefinition } from "../types/workflow.js";
+import type { EpicOption, IssueOption, WorkflowDefinition, WorkflowParentIssueType } from "../types/workflow.js";
 import { jiraRequest } from "./client.js";
 
 interface JiraSearchResponse {
@@ -13,12 +13,32 @@ interface JiraSearchResponse {
 interface JiraIssueResponse {
   fields: {
     summary: string;
+    parent?: {
+      key: string;
+      fields?: {
+        summary?: string;
+      };
+    };
   };
+}
+
+export interface JiraIssueParentDetails {
+  key: string;
+  summary?: string;
+}
+
+export interface JiraIssueDetails {
+  summary: string;
+  parent?: JiraIssueParentDetails;
 }
 
 let jiraSearchPath: "/rest/api/3/search/jql" | "/rest/api/3/search" = "/rest/api/3/search/jql";
 
-export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
+export function getWorkflowParentIssueType(workflow: WorkflowDefinition): WorkflowParentIssueType {
+  return workflow.parentIssueType ?? "Epic";
+}
+
+export function buildParentSearchJql(workflow: WorkflowDefinition, query: string): string {
   const escaped = query.replace(/"/g, '\\"').trim();
   const baseJql = `${workflow.epicSearchJql} AND status != Closed`;
 
@@ -29,8 +49,12 @@ export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string):
   return `${baseJql} AND (summary ~ "${escaped}*" OR key ~ "${escaped}*") ORDER BY updated DESC`;
 }
 
-export async function searchEpics(workflow: WorkflowDefinition, query: string): Promise<EpicOption[]> {
-  const jql = buildEpicSearchJql(workflow, query);
+export function buildEpicSearchJql(workflow: WorkflowDefinition, query: string): string {
+  return buildParentSearchJql(workflow, query);
+}
+
+export async function searchParentIssues(workflow: WorkflowDefinition, query: string): Promise<IssueOption[]> {
+  const jql = buildParentSearchJql(workflow, query);
   const payload = {
     jql,
     fields: ["summary"],
@@ -46,7 +70,7 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     });
   } catch {
     if (jiraSearchPath === "/rest/api/3/search") {
-      throw new Error(`Jira Epic search failed using ${jiraSearchPath}.`);
+      throw new Error(`Jira parent issue search failed using ${jiraSearchPath}.`);
     }
 
     jiraSearchPath = "/rest/api/3/search";
@@ -60,6 +84,10 @@ export async function searchEpics(workflow: WorkflowDefinition, query: string): 
     key: issue.key,
     summary: issue.fields.summary
   }));
+}
+
+export async function searchEpics(workflow: WorkflowDefinition, query: string): Promise<EpicOption[]> {
+  return searchParentIssues(workflow, query);
 }
 
 export async function searchChildTasks(
@@ -125,9 +153,22 @@ export async function searchChildTasks(
 }
 
 export async function getIssueSummary(issueKey: string): Promise<string> {
+  const result = await getIssueDetails(issueKey);
+  return result.summary;
+}
+
+export async function getIssueDetails(issueKey: string): Promise<JiraIssueDetails> {
   const result = await jiraRequest<JiraIssueResponse>(
-    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary`
+    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary,parent`
   );
 
-  return result.fields.summary;
+  return {
+    summary: result.fields.summary,
+    parent: result.fields.parent
+      ? {
+          key: result.fields.parent.key,
+          summary: result.fields.parent.fields?.summary
+        }
+      : undefined
+  };
 }

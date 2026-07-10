@@ -37,6 +37,28 @@ async function getCreateFields(projectKey: string, issueType: string) {
   return fields;
 }
 
+function getBugFieldConfig(jiraProjectKey: string) {
+  if (jiraProjectKey === "RB") {
+    return {
+      blockerTypeLabel: "RUG Blocker Type",
+      downtimeLabel: "RUG Ops Downtime (hours)",
+      blockerTypeFieldId: "customfield_16963",
+      downtimeFieldId: "customfield_16964"
+    };
+  }
+
+  if (jiraProjectKey === "UIM") {
+    return {
+      blockerTypeLabel: "UAE Blocker Type",
+      downtimeLabel: "UAE Ops Downtime (hours)",
+      blockerTypeFieldId: "customfield_18211",
+      downtimeFieldId: "customfield_18210"
+    };
+  }
+
+  return undefined;
+}
+
 export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIssueResponse> {
   const descriptionContent = input.descriptionContent ?? [
     {
@@ -56,9 +78,6 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
     },
     issuetype: {
       name: input.issueType
-    },
-    parent: {
-      key: input.parentEpicKey
     },
     summary: input.summary,
     description: {
@@ -91,15 +110,18 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
     }
   };
 
-  if (
-    (input.workflow.jiraProjectKey === "RB" || input.workflow.jiraProjectKey === "APIDD") &&
-    input.issueType === "Bug"
-  ) {
-    const isApiWorkflow = input.workflow.jiraProjectKey === "APIDD";
-    const blockerTypeLabel = isApiWorkflow ? "API Blocker Type" : "RUG Blocker Type";
-    const downtimeLabel = isApiWorkflow ? "API Ops Downtime (hours)" : "RUG Ops Downtime (hours)";
-    const blockerTypeFieldId = isApiWorkflow ? "customfield_17561" : "customfield_16963";
-    const downtimeFieldId = isApiWorkflow ? "customfield_17562" : "customfield_16964";
+  const jiraParentKey = input.workflow.parentIssueType === "Task" ? input.jiraParentKey : input.parentEpicKey;
+
+  if (jiraParentKey) {
+    fields.parent = {
+      key: jiraParentKey
+    };
+  }
+
+  const bugFieldConfig = input.issueType === "Bug" ? getBugFieldConfig(input.workflow.jiraProjectKey) : undefined;
+
+  if (bugFieldConfig) {
+    const { blockerTypeLabel, downtimeLabel, blockerTypeFieldId, downtimeFieldId } = bugFieldConfig;
 
     if (!input.blockerType) {
       throw new Error(`${blockerTypeLabel} is required for ${input.workflow.label} Bugs.`);

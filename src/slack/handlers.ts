@@ -14,7 +14,7 @@ import {
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
-import { buildEpicSearchJql, getIssueSummary, searchChildTasks, searchEpics } from "../jira/searchEpics.js";
+import { buildParentSearchJql, getIssueDetails, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
 import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
   BlockerType,
@@ -30,6 +30,7 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  buildIssueSelectOption,
   buildEodDescriptionContent,
   buildEodReportSummary,
   buildCreateIssueModal,
@@ -50,7 +51,8 @@ import {
   selectedIssueTypeFromValue,
   shouldCollectEodInThread,
   shouldUseSingleThreadEod,
-  usesEhsSpecificFields
+  usesEhsSpecificFields,
+  workflowRequiresSeparateEodAssetTask
 } from "./modal.js";
 import { downloadSlackFile, shareSlackFile } from "./attachments.js";
 import {
@@ -63,15 +65,10 @@ import {
 type ModalState = ViewSubmitAction["view"]["state"]["values"];
 type DmBlocks = Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>;
 
-const DATA_OPERATIONS_USERGROUP_IDENTIFIERS = [
+const DATA_TEAM_USERGROUP_IDENTIFIERS = [
   "data_team",
   "@data_team",
-  "data-operations",
-  "data_operations",
-  "data-ops",
-  "data_ops",
   "data-team",
-  "data operations",
   "data team"
 ] as const;
 
@@ -86,6 +83,28 @@ function getSelectedOptionValue(
   }
 
   return action.selected_option?.value;
+}
+
+function getSelectedOptionLabel(
+  action:
+    | BlockAction["actions"][number]
+    | ViewSubmitAction["view"]["state"]["values"][string][string]
+    | undefined
+): string | undefined {
+  if (!action || !("selected_option" in action)) {
+    return undefined;
+  }
+
+  const selectedOption = action.selected_option;
+  const text = selectedOption?.text?.text?.trim();
+  const description =
+    selectedOption && "description" in selectedOption ? selectedOption.description?.text?.trim() : undefined;
+
+  if (text && description) {
+    return `${text} ${description}`.trim();
+  }
+
+  return text || description || undefined;
 }
 
 function getPlainTextValue(
@@ -118,6 +137,18 @@ function getRichTextValue(
   }
 
   return undefined;
+}
+
+function decodeEodContextForLogging(privateMetadata?: string): EodThreadContext | undefined {
+  if (!privateMetadata) {
+    return undefined;
+  }
+
+  try {
+    return decodeEodThreadContext(privateMetadata);
+  } catch {
+    return undefined;
+  }
 }
 
 function getSelectedOptionsValues(
@@ -331,19 +362,20 @@ function getModalStateValues(stateValues?: ModalState) {
         ? parentEpicSelection.selected_option?.value ?? undefined
         : undefined,
     parentEpicLabel:
-      parentEpicSelection && "selected_option" in parentEpicSelection
-        ? parentEpicSelection.selected_option?.text?.text ?? undefined
-        : undefined,
+      getSelectedOptionLabel(parentEpicSelection),
     eodTaskKey:
       parentTaskSelection && "selected_option" in parentTaskSelection
         ? parentTaskSelection.selected_option?.value ?? undefined
         : undefined,
     eodTaskLabel:
-      parentTaskSelection && "selected_option" in parentTaskSelection
-        ? parentTaskSelection.selected_option?.text?.text ?? undefined
-        : undefined,
+      getSelectedOptionLabel(parentTaskSelection),
     eodAssetType: parseEodAssetType(
       getSelectedOptionValue(stateValues?.[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
+    ),
+    eodTotalTubeCount: getPlainTextValue(
+      stateValues,
+      CALLBACKS.eodTotalTubeCountBlock,
+      CALLBACKS.eodTotalTubeCountAction
     ),
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
@@ -351,6 +383,51 @@ function getModalStateValues(stateValues?: ModalState) {
     opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction),
     ehs: getEhsModalStateValues(stateValues)
   };
+}
+
+function getBoilerTubeCompletionPercent(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  scannedTubeCount: number
+): number | undefined {
+  if (!usesTubeCountForEod(context)) {
+    return undefined;
+  }
+
+  if (typeof context.totalTubeCount !== "number" || !Number.isFinite(context.totalTubeCount) || context.totalTubeCount <= 0) {
+    return undefined;
+  }
+
+  return (scannedTubeCount / context.totalTubeCount) * 100;
+}
+
+function hasReachedDataOperationsAlertThreshold(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  progressValue: number
+): boolean {
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
+
+  if (usesTubeCountForEod(context)) {
+    return typeof boilerCompletionPercent === "number" && boilerCompletionPercent >= 80;
+  }
+
+  return progressValue >= 80;
+}
+
+function isEodScopeComplete(
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  progressValue: number
+): boolean {
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
+
+  if (usesTubeCountForEod(context)) {
+    return typeof boilerCompletionPercent === "number" && boilerCompletionPercent >= 100;
+  }
+
+  return progressValue >= 100;
+}
+
+function formatPercentValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
 }
 
 function clearEodTaskSelectionIfParentChanged(
@@ -367,6 +444,18 @@ function clearEodTaskSelectionIfParentChanged(
     eodTaskKey: undefined,
     eodTaskLabel: undefined
   };
+}
+
+async function resolveJiraParentKeyForSelectedInspection(input: {
+  workflow: ReturnType<typeof getWorkflowByKey>;
+  selectedInspectionKey: string;
+}): Promise<string | undefined> {
+  if (input.workflow.parentIssueType !== "Task") {
+    return input.selectedInspectionKey;
+  }
+
+  const selectedIssue = await getIssueDetails(input.selectedInspectionKey);
+  return selectedIssue.parent?.key;
 }
 
 function formatJiraErrorMessage(error: unknown): string {
@@ -612,16 +701,33 @@ function getParentInspectionSummary(context: Pick<EodThreadContext, "parentEpicK
   return getEpicSummaryFromLabel(context.parentEpicLabel, context.parentEpicKey) ?? getParentInspectionLabel(context);
 }
 
+function hasSeparateEodAssetTask(
+  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskSummary">
+): boolean {
+  return Boolean(context.parentTaskKey?.trim() || context.parentTaskSummary?.trim());
+}
+
 function getParentTaskLabel(
-  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+  context: Pick<
+    EodThreadContext,
+    "parentEpicKey" | "parentEpicLabel" | "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary"
+  >
 ): string {
-  return context.parentTaskLabel?.trim() || context.parentTaskSummary.trim() || context.parentTaskKey;
+  return (
+    context.parentTaskLabel?.trim() ||
+    context.parentTaskSummary?.trim() ||
+    context.parentTaskKey?.trim() ||
+    getParentInspectionLabel(context)
+  );
 }
 
 function getParentTaskSummary(
-  context: Pick<EodThreadContext, "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary">
+  context: Pick<
+    EodThreadContext,
+    "parentEpicKey" | "parentEpicLabel" | "parentTaskKey" | "parentTaskLabel" | "parentTaskSummary"
+  >
 ): string {
-  return context.parentTaskSummary.trim() || getParentTaskLabel(context);
+  return context.parentTaskSummary?.trim() || getParentTaskLabel(context) || getParentInspectionSummary(context);
 }
 
 function getEodThreadLifecycleStatus(context: Pick<EodThreadContext, "status">): "active" | "closed" {
@@ -646,8 +752,14 @@ function formatSlackDateTime(value?: string): string | undefined {
 function buildEodThreadStartMessage(context: EodThreadContext) {
   const status = getEodThreadLifecycleStatus(context);
   const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
-  const assetTask = buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context));
+  const assetTask = hasSeparateEodAssetTask(context)
+    ? buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context))
+    : undefined;
   const progressFieldLabel = usesTubeCountForEod(context) ? "Last # of Tubes Scanned" : "Last % Coverage Update";
+  const totalTubeCountLine =
+    usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
+      ? `*Total Tubes:* \`${String(context.totalTubeCount)}\``
+      : undefined;
   const reportStatus = context.reportIssueKey
     ? `:white_check_mark: ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`
     : ":hourglass_flowing_sand: Pending";
@@ -659,6 +771,7 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const statusLines = [
     `*Thread Status:* ${status === "closed" ? ":white_check_mark: Closed Out" : ":large_green_circle: Active"}`,
     `*Scanning Scope:* ${status === "closed" ? ":white_check_mark: Completed" : ":hourglass_flowing_sand: In Progress"}`,
+    ...(totalTubeCountLine ? [totalTubeCountLine] : []),
     `*${progressFieldLabel}:* ${coverageStatus}`,
     `*Last EOD Report:* ${reportStatus}`
   ];
@@ -676,7 +789,7 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const text =
     `*EOD Intake ${status === "closed" ? ":white_check_mark:" : ":thread:"}*\n` +
     `*Parent Inspection:* ${parentInspection}\n` +
-    `*Asset:* ${assetTask}\n` +
+    `${assetTask ? `*Asset:* ${assetTask}\n` : ""}` +
     `*Asset Type:* ${escapeSlackText(context.assetType)}\n` +
     `*Created by:* <@${context.requesterId}>`;
 
@@ -838,20 +951,25 @@ function buildEodCompletionMessage(input: {
     input.context.parentEpicKey,
     getParentInspectionLabel(input.context)
   );
-  const assetTask = buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context));
   const progressFieldLabel = getEodProgressFieldLabel(input.context);
   const headerLines = [
     `*EOD Report Generated*`,
     `*EOD Report:* ${issueLink} - ${escapeSlackText(input.issueSummary)}`,
     `*Parent Inspection:* ${parentInspection}`,
-    `*Asset:* ${assetTask}`,
     `*Asset Type:* ${escapeSlackText(input.context.assetType)}`,
+    ...(usesTubeCountForEod(input.context) && typeof input.context.totalTubeCount === "number"
+      ? [`*Total Tubes:* ${String(input.context.totalTubeCount)}`]
+      : []),
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
     `*${progressFieldLabel}:* ${formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted)}`,
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
+
+  if (hasSeparateEodAssetTask(input.context)) {
+    headerLines.splice(3, 0, `*Asset:* ${buildLinkedJiraLabel(input.context.parentTaskKey, getParentTaskLabel(input.context))}`);
+  }
 
   return {
     text: `EOD Report generated: ${input.issueKey} for ${input.context.parentEpicKey}.`,
@@ -890,34 +1008,48 @@ async function buildEodDataOperationsAlertMessage(input: {
   values: EodReportFormValues;
   resolveUserGroupMention: (identifiers: readonly string[]) => Promise<string | undefined>;
 }) {
-  if (usesTubeCountForEod(input.context)) {
+  if (!hasReachedDataOperationsAlertThreshold(input.context, input.values.numberOfScansCompleted)) {
     return undefined;
   }
 
-  if (input.values.numberOfScansCompleted < 80) {
-    return undefined;
-  }
-
-  const dataOperationsMention = await input.resolveUserGroupMention(DATA_OPERATIONS_USERGROUP_IDENTIFIERS);
+  const dataOperationsMention = await input.resolveUserGroupMention(DATA_TEAM_USERGROUP_IDENTIFIERS);
 
   if (!dataOperationsMention) {
     return undefined;
   }
 
-  const asset = escapeSlackText(getParentTaskSummary(input.context));
-  const inspection = escapeSlackText(getParentInspectionSummary(input.context));
-  const isCoverageComplete = input.values.numberOfScansCompleted >= 100;
+  const inspectionSummary = getParentInspectionSummary(input.context);
+  const assetSummary = getParentTaskSummary(input.context);
+  const asset = escapeSlackText(assetSummary);
+  const inspection = escapeSlackText(inspectionSummary);
+  const hasSeparateAsset = hasSeparateEodAssetTask(input.context);
+  const isCoverageComplete = isEodScopeComplete(input.context, input.values.numberOfScansCompleted);
+  const boilerCompletionPercent = getBoilerTubeCompletionPercent(input.context, input.values.numberOfScansCompleted);
   const header = isCoverageComplete
     ? ":rotating_light: *Inspection scope completed*"
     : ":rotating_light: *Inspection nearing completion*";
+  const progressLine =
+    typeof boilerCompletionPercent === "number" && typeof input.context.totalTubeCount === "number"
+      ? `*Tube Progress:* \`${input.values.numberOfScansCompleted}/${input.context.totalTubeCount}\` tubes (\`${formatPercentValue(
+          boilerCompletionPercent
+        )}%\`)`
+      : `*Coverage:* \`${input.values.numberOfScansCompleted}%\``;
   const body = isCoverageComplete
-    ? `*Coverage:* \`100%\`\n${asset} for ${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
-    : `*Coverage:* \`${input.values.numberOfScansCompleted}%\`\n${asset} for ${inspection} is nearing completion. ${dataOperationsMention}`;
+    ? hasSeparateAsset
+      ? `${progressLine}\n${asset} for ${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
+      : `${progressLine}\n${inspection} has completed inspection scope and should be available for review soon. ${dataOperationsMention}`
+    : hasSeparateAsset
+      ? `${progressLine}\n${asset} for ${inspection} is nearing completion. ${dataOperationsMention}`
+      : `${progressLine}\n${inspection} is nearing completion. ${dataOperationsMention}`;
 
   return {
     text: isCoverageComplete
-      ? `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} has reached 100% coverage.`
-      : `${getParentTaskSummary(input.context)} for ${getParentInspectionSummary(input.context)} is nearing completion.`,
+      ? hasSeparateAsset
+        ? `${assetSummary} for ${inspectionSummary} has completed inspection scope.`
+        : `${inspectionSummary} has completed inspection scope.`
+      : hasSeparateAsset
+        ? `${assetSummary} for ${inspectionSummary} is nearing completion.`
+        : `${inspectionSummary} is nearing completion.`,
     blocks: [
       {
         type: "section" as const,
@@ -1284,7 +1416,10 @@ function summarizeCreateIssueSubmission(input: {
   });
 }
 
-function validateEodForm(values: ModalState | undefined, context: Pick<EodThreadContext, "assetType">) {
+function validateEodForm(
+  values: ModalState | undefined,
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">
+) {
   const errors: Record<string, string> = {};
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
   const fullDayOverviewValue = getRichTextValue(
@@ -1332,6 +1467,14 @@ function validateEodForm(values: ModalState | undefined, context: Pick<EodThread
     errors[CALLBACKS.eodScansCompletedBlock] = usesTubeCount
       ? "Enter a number greater than or equal to 0."
       : "Enter a number from 0 to 100.";
+  } else if (
+    usesTubeCount &&
+    typeof context.totalTubeCount === "number" &&
+    Number(scansCompletedValue) > context.totalTubeCount
+  ) {
+    errors[CALLBACKS.eodScansCompletedBlock] = `Scanned tubes cannot exceed the total tube count of ${String(
+      context.totalTubeCount
+    )}.`;
   }
 
   if (!scanningTimeValue) {
@@ -1642,6 +1785,56 @@ export function registerSlackHandlers(app: App): void {
     logger.info(`Updated modal issue type for workflow ${workflow.key} to ${selectedIssueType}`);
   });
 
+  app.action(CALLBACKS.eodAssetTypeAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD asset type action did not include a modal view.");
+      return;
+    }
+
+    const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
+    const workflow = getWorkflowByKey(workflowKey);
+    const state = getModalStateValues(body.view.state.values);
+    const selectedAssetType = parseEodAssetType(getSelectedOptionValue(body.actions[0]));
+    const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
+      ? state.selectedIssueType
+      : workflow.allowedIssueTypes[0];
+
+    logger.info(
+      `Attempting modal EOD asset type update for workflow ${workflow.key} to ${selectedAssetType ?? "n/a"} view=${body.view.id}`
+    );
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildCreateIssueModal(
+            workflow,
+            {
+              ...state,
+              selectedIssueType,
+              eodAssetType: selectedAssetType
+            },
+            {
+              workflowKey: workflow.key,
+              channelId: state.channelId ?? getChannelIdFromViewMetadata(body.view),
+              requireChannelSelection: getRequireChannelSelectionFromViewMetadata(body.view)
+            }
+          )
+        },
+        logger,
+        `Failed modal EOD asset type update for workflow ${workflow.key}`
+      );
+    } catch (error) {
+      return;
+    }
+
+    logger.info(`Updated modal EOD asset type for workflow ${workflow.key} to ${selectedAssetType ?? "n/a"}`);
+  });
+
   app.action(CALLBACKS.epicAction, async ({ ack, body, client, logger }) => {
     await ack();
 
@@ -1652,10 +1845,15 @@ export function registerSlackHandlers(app: App): void {
 
     const workflowKey = getWorkflowKeyFromViewMetadata(body.view) ?? listWorkflows()[0].key;
     const workflow = getWorkflowByKey(workflowKey);
+
+    if (!workflowRequiresSeparateEodAssetTask(workflow)) {
+      logger.info(`Ignoring EOD task selection for workflow ${workflow.key} because no child asset task is required.`);
+      return;
+    }
+
     const state = getModalStateValues(body.view.state.values);
     const selectedParentEpicKey = getSelectedOptionValue(body.actions[0]);
-    const selectedParentEpicLabel =
-      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedParentEpicLabel = getSelectedOptionLabel(body.actions[0]);
     const nextState = clearEodTaskSelectionIfParentChanged(state, selectedParentEpicKey);
     const selectedIssueType = workflow.allowedIssueTypes.includes(nextState.selectedIssueType ?? "Bug")
       ? nextState.selectedIssueType
@@ -1770,7 +1968,6 @@ export function registerSlackHandlers(app: App): void {
 
     logger.info(`Opened EOD intake modal for thread ${context.threadTs}`);
   });
-
   app.action(CALLBACKS.singleThreadEodStartButton, async ({ ack, body, client, logger }) => {
     await ack();
 
@@ -1800,6 +1997,66 @@ export function registerSlackHandlers(app: App): void {
     });
 
     logger.info(`Opened single-thread EOD intake modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.eodScansCompletedAction, async ({ ack, body, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD scans completed input action did not include a modal view.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const actionValue = action && "value" in action ? action.value : undefined;
+    const stateValue = getPlainTextValue(
+      body.view.state.values,
+      CALLBACKS.eodScansCompletedBlock,
+      CALLBACKS.eodScansCompletedAction
+    );
+    const context = decodeEodContextForLogging(body.view.private_metadata);
+
+    logger.info(
+      `EOD scans completed input changed ${JSON.stringify({
+        userId: body.user.id,
+        workflowKey: context?.workflowKey,
+        threadTs: context?.threadTs,
+        assetType: context?.assetType,
+        actionValue,
+        stateValue,
+        viewId: body.view.id
+      })}`
+    );
+  });
+
+  app.action(CALLBACKS.eodScanningTimeAction, async ({ ack, body, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view) {
+      logger.error("EOD scanning time input action did not include a modal view.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const actionValue = action && "value" in action ? action.value : undefined;
+    const stateValue = getPlainTextValue(
+      body.view.state.values,
+      CALLBACKS.eodScanningTimeBlock,
+      CALLBACKS.eodScanningTimeAction
+    );
+    const context = decodeEodContextForLogging(body.view.private_metadata);
+
+    logger.info(
+      `EOD scanning time input changed ${JSON.stringify({
+        userId: body.user.id,
+        workflowKey: context?.workflowKey,
+        threadTs: context?.threadTs,
+        assetType: context?.assetType,
+        actionValue,
+        stateValue,
+        viewId: body.view.id
+      })}`
+    );
   });
 
   app.action(CALLBACKS.eodCloseoutButton, async ({ ack, body, client, logger }) => {
@@ -1851,25 +2108,21 @@ export function registerSlackHandlers(app: App): void {
       const query = (body.value ?? "").trim();
 
       logger.info(
-        `Received Epic lookup request for workflow ${workflow.key} with query="${query}" action=${body.action_id ?? "n/a"}`
+        `Received parent issue lookup request for workflow ${workflow.key} with query="${query}" action=${body.action_id ?? "n/a"}`
       );
 
-      const jql = buildEpicSearchJql(workflow, query);
-      const epics = await searchEpics(workflow, query);
+      const jql = buildParentSearchJql(workflow, query);
+      const parentIssues = await searchParentIssues(workflow, query);
 
       await ack({
-        options: epics.map((epic) => ({
-          text: {
-            type: "plain_text",
-            text: `${epic.key} - ${epic.summary}`.slice(0, 75)
-          },
-          value: epic.key
+        options: parentIssues.map((issue) => ({
+          ...buildIssueSelectOption(issue.key, issue.summary, query)
         }))
       });
 
-      logger.info(`Returned ${epics.length} Epic options for workflow ${workflow.key} using JQL: ${jql}`);
+      logger.info(`Returned ${parentIssues.length} parent issue options for workflow ${workflow.key} using JQL: ${jql}`);
     } catch (error) {
-      logger.error(`Failed to load Epic options for query "${body.value ?? ""}".`, error);
+      logger.error(`Failed to load parent issue options for query "${body.value ?? ""}".`, error);
       await ack({ options: [] });
     }
   });
@@ -1878,6 +2131,11 @@ export function registerSlackHandlers(app: App): void {
     try {
       const workflowKey = getSelectedWorkflowKeyFromSuggestion(body);
       const workflow = getWorkflowByKey(workflowKey);
+      if (!workflowRequiresSeparateEodAssetTask(workflow)) {
+        await ack({ options: [] });
+        return;
+      }
+
       const parentEpicKey = getSelectedOptionValue(
         body.view?.state.values?.[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction]
       );
@@ -1892,11 +2150,7 @@ export function registerSlackHandlers(app: App): void {
 
       await ack({
         options: tasks.map((task) => ({
-          text: {
-            type: "plain_text",
-            text: `${task.key} - ${task.summary}`.slice(0, 75)
-          },
-          value: task.key
+          ...buildIssueSelectOption(task.key, task.summary, query)
         }))
       });
 
@@ -1952,8 +2206,7 @@ export function registerSlackHandlers(app: App): void {
     const workflow = getWorkflowByKey(workflowKey);
     const state = getModalStateValues(body.view.state.values);
     const selectedTaskKey = getSelectedOptionValue(body.actions[0]);
-    const selectedTaskLabel =
-      "selected_option" in body.actions[0] ? body.actions[0].selected_option?.text?.text : undefined;
+    const selectedTaskLabel = getSelectedOptionLabel(body.actions[0]);
     const selectedIssueType = workflow.allowedIssueTypes.includes(state.selectedIssueType ?? "Bug")
       ? state.selectedIssueType
       : workflow.allowedIssueTypes[0];
@@ -2005,20 +2258,14 @@ export function registerSlackHandlers(app: App): void {
     const values = view.state.values;
     const workflow = getWorkflowByKey(workflowKey);
     const parentEpicLabel =
-      values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
-      "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
-        ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.text?.text
-        : undefined;
+      getSelectedOptionLabel(values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction]);
     const parentEpicKey =
       values[CALLBACKS.epicBlock]?.[CALLBACKS.epicAction] &&
       "selected_option" in values[CALLBACKS.epicBlock][CALLBACKS.epicAction]
         ? values[CALLBACKS.epicBlock][CALLBACKS.epicAction].selected_option?.value
         : undefined;
     const parentTaskLabel =
-      values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
-      "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
-        ? values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction].selected_option?.text?.text
-        : undefined;
+      getSelectedOptionLabel(values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction]);
     const parentTaskKey =
       values[CALLBACKS.eodTaskBlock]?.[CALLBACKS.eodTaskAction] &&
       "selected_option" in values[CALLBACKS.eodTaskBlock][CALLBACKS.eodTaskAction]
@@ -2032,6 +2279,8 @@ export function registerSlackHandlers(app: App): void {
     const selectedThreadAssetType = parseEodAssetType(
       getSelectedOptionValue(values[CALLBACKS.eodAssetTypeBlock]?.[CALLBACKS.eodAssetTypeAction])
     );
+    const selectedTotalTubeCountValue =
+      getPlainTextValue(values, CALLBACKS.eodTotalTubeCountBlock, CALLBACKS.eodTotalTubeCountAction) ?? "";
     const summary =
       values[CALLBACKS.summaryBlock]?.[CALLBACKS.summaryAction] &&
       "value" in values[CALLBACKS.summaryBlock][CALLBACKS.summaryAction]
@@ -2056,6 +2305,7 @@ export function registerSlackHandlers(app: App): void {
     const isSingleThreadEod = selectedIssueType ? shouldUseSingleThreadEod(selectedIssueType) : false;
     const isEod = isThreadPerAssetEod || isSingleThreadEod;
     const isEhsTask = selectedIssueType ? usesEhsSpecificFields(workflow, selectedIssueType) : false;
+    const requiresSeparateAssetTask = workflowRequiresSeparateEodAssetTask(workflow);
     const submissionSummary = summarizeCreateIssueSubmission({
       workflowKey: workflow.key,
       jiraProjectKey: workflow.jiraProjectKey,
@@ -2087,7 +2337,14 @@ export function registerSlackHandlers(app: App): void {
       await ack({
         response_action: "errors",
         errors: {
-          ...(parentEpicKey ? {} : { [CALLBACKS.epicBlock]: "Please choose a parent Epic." }),
+          ...(parentEpicKey
+            ? {}
+            : {
+                [CALLBACKS.epicBlock]:
+                  workflow.parentIssueType === "Task"
+                    ? "Please choose a parent inspection."
+                    : "Please choose a parent Epic."
+              }),
           ...(issueTypeValue ? {} : { [CALLBACKS.issueTypeBlock]: "Please choose an issue type." }),
           ...(isEod || isEhsTask || summary
             ? {}
@@ -2143,7 +2400,7 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
-    if (isThreadPerAssetEod && !parentTaskKey) {
+    if (isThreadPerAssetEod && requiresSeparateAssetTask && !parentTaskKey) {
       await ack({
         response_action: "errors",
         errors: {
@@ -2153,10 +2410,40 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    const requiresBoilerTubeCount = isEod && selectedThreadAssetType === "Boiler";
+
+    if (requiresBoilerTubeCount) {
+      const totalTubeCount = Number(selectedTotalTubeCountValue);
+
+      if (!selectedTotalTubeCountValue) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [CALLBACKS.eodTotalTubeCountBlock]: "Please enter the total number of tubes for this boiler."
+          }
+        });
+        return;
+      }
+
+      if (!Number.isInteger(totalTubeCount) || totalTubeCount <= 0) {
+        await ack({
+          response_action: "errors",
+          errors: {
+            [CALLBACKS.eodTotalTubeCountBlock]: "Enter a whole number greater than 0."
+          }
+        });
+        return;
+      }
+    }
+
     if (requiresBugSpecificFields(workflow, selectedIssueType)) {
       const errors: Record<string, string> = {};
       const blockerTypeLabel =
-        workflow.jiraProjectKey === "APIDD" ? "API Blocker Type" : "RUG Blocker Type";
+        workflow.jiraProjectKey === "RB"
+          ? "RUG Blocker Type"
+          : workflow.jiraProjectKey === "UIM"
+            ? "UAE Blocker Type"
+            : "Blocker Type";
 
       if (!blockerTypeValue) {
         errors[CALLBACKS.blockerTypeBlock] = `Choose an ${blockerTypeLabel}.`;
@@ -2241,12 +2528,28 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       if (isThreadPerAssetEod) {
-        if (!parentTaskKey) {
+        let selectedParentTaskKey: string | undefined;
+        let resolvedParentTaskLabel: string | undefined;
+        let parentTaskSummary: string | undefined;
+        const jiraParentKey = await resolveJiraParentKeyForSelectedInspection({
+          workflow,
+          selectedInspectionKey: parentEpicKey
+        });
+
+        if (requiresSeparateAssetTask) {
+          if (!parentTaskKey) {
+            throw new Error("Asset task is required for EOD intake.");
+          }
+
+          selectedParentTaskKey = parentTaskKey;
+          resolvedParentTaskLabel = parentTaskLabel;
+          parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
+        }
+
+        if (!requiresSeparateAssetTask && workflow.parentIssueType !== "Task") {
           throw new Error("Asset task is required for EOD intake.");
         }
 
-        const selectedParentTaskKey = parentTaskKey;
-        const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
         logger.info(
           `Creating EOD intake thread ${JSON.stringify({
             workflowKey: workflow.key,
@@ -2259,10 +2562,12 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
+          jiraParentKey,
           parentTaskKey: selectedParentTaskKey,
-          parentTaskLabel,
+          parentTaskLabel: resolvedParentTaskLabel,
           parentTaskSummary,
           assetType: selectedThreadAssetType as EodAssetType,
+          totalTubeCount: requiresBoilerTubeCount ? Number(selectedTotalTubeCountValue) : undefined,
           requesterId: body.user.id,
           channelId: getEodChannelId(channelId)
         });
@@ -2339,6 +2644,10 @@ export function registerSlackHandlers(app: App): void {
         workflow,
         issueType: jiraIssueType,
         parentEpicKey,
+        jiraParentKey: await resolveJiraParentKeyForSelectedInspection({
+          workflow,
+          selectedInspectionKey: parentEpicKey
+        }),
         summary: issueSummary,
         details: issueDetails,
         descriptionContent,
@@ -2348,6 +2657,23 @@ export function registerSlackHandlers(app: App): void {
       });
 
       logger.info(`Created Jira issue ${issue.key}`);
+
+      if (workflow.parentIssueType === "Task") {
+        try {
+          await linkIssuesByRelationship({
+            issueKey: issue.key,
+            relatedIssueKey: parentEpicKey,
+            relationshipText: "Connects to"
+          });
+          logger.info(`Linked Jira issue ${issue.key} to inspection task ${parentEpicKey} as "Connects to".`);
+        } catch (error) {
+          logger.warn(
+            `Could not link Jira issue ${issue.key} to inspection task ${parentEpicKey}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+      }
 
       const confirmationMessage = buildIssueConfirmationMessage({
         issueType: selectedIssueType,
@@ -2528,6 +2854,7 @@ export function registerSlackHandlers(app: App): void {
         workflow,
         issueType: "EOD Report",
         parentEpicKey: context.parentEpicKey,
+        jiraParentKey: context.jiraParentKey,
         summary,
         details,
         descriptionContent: buildEodDescriptionContent(context, {
@@ -2541,17 +2868,21 @@ export function registerSlackHandlers(app: App): void {
         requesterName: body.user.id
       });
 
-      if (context.parentTaskKey) {
+      const relatedInspectionIssueKey = context.parentTaskKey ?? (workflow.parentIssueType === "Task" ? context.parentEpicKey : undefined);
+
+      if (relatedInspectionIssueKey) {
         try {
           await linkIssuesByRelationship({
             issueKey: issue.key,
-            relatedIssueKey: context.parentTaskKey,
+            relatedIssueKey: relatedInspectionIssueKey,
             relationshipText: "Connects to"
           });
-          logger.info(`Linked EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey} as "Connects to".`);
+          logger.info(
+            `Linked EOD Jira issue ${issue.key} to related inspection issue ${relatedInspectionIssueKey} as "Connects to".`
+          );
         } catch (error) {
           logger.warn(
-            `Could not link EOD Jira issue ${issue.key} to asset task ${context.parentTaskKey}: ${
+            `Could not link EOD Jira issue ${issue.key} to related inspection issue ${relatedInspectionIssueKey}: ${
               error instanceof Error ? error.message : String(error)
             }`
           );
@@ -2637,9 +2968,12 @@ export function registerSlackHandlers(app: App): void {
         resolveUserGroupMention: resolveSlackUserGroupMention
       });
 
-      if (validation.values.numberOfScansCompleted >= 80 && !dataOperationsAlert) {
+      if (
+        hasReachedDataOperationsAlertThreshold(context, validation.values.numberOfScansCompleted) &&
+        !dataOperationsAlert
+      ) {
         logger.warn(
-          `Skipping EOD data operations alert for thread ${context.threadTs} because the data operations Slack user group could not be resolved.`
+          `Skipping EOD data team alert for thread ${context.threadTs} because the data_team Slack user group could not be resolved.`
         );
       }
 

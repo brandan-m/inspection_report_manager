@@ -36,6 +36,8 @@ export const CALLBACKS = {
   eodDateAction: "eod_date_input",
   eodAssetTypeBlock: "eod_asset_type_block",
   eodAssetTypeAction: "eod_asset_type_select",
+  eodTotalTubeCountBlock: "eod_total_tube_count_block",
+  eodTotalTubeCountAction: "eod_total_tube_count_input",
   eodFullDayOverviewBlock: "eod_full_day_overview_block",
   eodFullDayOverviewAction: "eod_full_day_overview_input",
   eodCrewOnSiteBlock: "eod_crew_on_site_block",
