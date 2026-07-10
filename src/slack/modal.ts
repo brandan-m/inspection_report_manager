@@ -296,6 +296,13 @@ export interface ModalMetadata {
   requireChannelSelection?: boolean;
 }
 
+export interface SingleThreadEodModalStateValues {
+  taskKey?: string;
+  taskLabel?: string;
+  assetType?: EodAssetType;
+  totalTubeCount?: string;
+}
+
 function isWorkflowWithBugFields(workflow: WorkflowDefinition): boolean {
   return workflow.jiraProjectKey === "RB" || workflow.jiraProjectKey === "UIM";
 }
@@ -703,6 +710,7 @@ export function encodeSingleThreadEodContext(context: SingleThreadEodContext): s
       s: asset.parentTaskSummary,
       t: asset.assetType,
       p: asset.lastProgressValue,
+      tt: asset.totalTubeCount,
       r: asset.reportIssueKey
     }))
   });
@@ -718,6 +726,7 @@ function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetSt
     s?: unknown;
     t?: unknown;
     p?: unknown;
+    tt?: unknown;
     r?: unknown;
   };
 
@@ -735,6 +744,7 @@ function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetSt
     parentTaskSummary: asset.s,
     assetType: asset.t as EodAssetType,
     lastProgressValue: typeof asset.p === "number" && Number.isFinite(asset.p) ? asset.p : undefined,
+    totalTubeCount: typeof asset.tt === "number" && Number.isFinite(asset.tt) && asset.tt > 0 ? asset.tt : undefined,
     reportIssueKey: typeof asset.r === "string" && asset.r.trim().length > 0 ? asset.r : undefined
   };
 }
@@ -965,7 +975,13 @@ export function buildEodReportModal(context: EodThreadContext) {
   };
 }
 
-export function buildSingleThreadEodReportModal(context: SingleThreadEodContext) {
+export function buildSingleThreadEodReportModal(
+  context: SingleThreadEodContext,
+  state: SingleThreadEodModalStateValues = {}
+) {
+  const usesTubeCount = state.assetType === "Boiler";
+  const progressFieldLabel =
+    state.assetType ? getEodProgressFieldLabel({ assetType: state.assetType }) : "sqft. % done";
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.singleThreadEodReportView,
@@ -1003,6 +1019,8 @@ export function buildSingleThreadEodReportModal(context: SingleThreadEodContext)
           type: "external_select",
           action_id: CALLBACKS.singleThreadEodTaskAction,
           min_query_length: 0,
+          initial_option:
+            state.taskKey && state.taskLabel ? buildIssueSelectOption(state.taskKey, state.taskLabel) : undefined,
           placeholder: {
             type: "plain_text",
             text: "Search child Tasks under the parent Epic"
@@ -1012,9 +1030,11 @@ export function buildSingleThreadEodReportModal(context: SingleThreadEodContext)
       {
         type: "input",
         block_id: CALLBACKS.singleThreadEodAssetTypeBlock,
+        dispatch_action: true,
         element: {
           type: "static_select",
           action_id: CALLBACKS.singleThreadEodAssetTypeAction,
+          initial_option: selectedOption(state.assetType),
           placeholder: {
             type: "plain_text",
             text: "Choose asset type"
@@ -1026,6 +1046,29 @@ export function buildSingleThreadEodReportModal(context: SingleThreadEodContext)
           text: "Asset Type"
         }
       },
+      ...(usesTubeCount
+        ? [
+            {
+              type: "input" as const,
+              block_id: CALLBACKS.eodTotalTubeCountBlock,
+              element: {
+                type: "number_input" as const,
+                action_id: CALLBACKS.eodTotalTubeCountAction,
+                is_decimal_allowed: false,
+                min_value: "1",
+                initial_value: state.totalTubeCount,
+                placeholder: {
+                  type: "plain_text" as const,
+                  text: "Enter the total tube count for this boiler"
+                }
+              },
+              label: {
+                type: "plain_text" as const,
+                text: "Total # of Tubes"
+              }
+            }
+          ]
+        : []),
       {
         type: "input",
         block_id: CALLBACKS.eodDateBlock,
@@ -1069,6 +1112,7 @@ export function buildSingleThreadEodReportModal(context: SingleThreadEodContext)
           action_id: CALLBACKS.eodScansCompletedAction,
           is_decimal_allowed: false,
           min_value: "0",
+          ...(usesTubeCount ? {} : { max_value: "100" }),
           placeholder: {
             type: "plain_text",
             text: "0"
@@ -1076,7 +1120,7 @@ export function buildSingleThreadEodReportModal(context: SingleThreadEodContext)
         },
         label: {
           type: "plain_text",
-          text: "Progress (% complete or # of Tubes Scanned for Boilers)"
+          text: usesTubeCount ? progressFieldLabel : "sqft. % done"
         }
       },
       {
