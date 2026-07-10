@@ -47,6 +47,7 @@ import {
   usesTubeCountForEod,
   formatEhsDetails,
   type ModalMetadata,
+  type SingleThreadEodModalStateValues,
   requiresBugSpecificFields,
   selectedIssueTypeFromValue,
   shouldCollectEodInThread,
@@ -382,6 +383,29 @@ function getModalStateValues(stateValues?: ModalState) {
     blockerType: parseBlockerType(blockerTypeValue),
     opsDowntimeHours: getPlainTextValue(stateValues, CALLBACKS.downtimeBlock, CALLBACKS.downtimeAction),
     ehs: getEhsModalStateValues(stateValues)
+  };
+}
+
+function getSingleThreadEodModalStateValues(stateValues?: ModalState): SingleThreadEodModalStateValues {
+  const parentTaskSelection =
+    stateValues?.[CALLBACKS.singleThreadEodTaskBlock]?.[CALLBACKS.singleThreadEodTaskAction];
+
+  return {
+    taskKey:
+      parentTaskSelection && "selected_option" in parentTaskSelection
+        ? parentTaskSelection.selected_option?.value ?? undefined
+        : undefined,
+    taskLabel: getSelectedOptionLabel(parentTaskSelection),
+    assetType: parseEodAssetType(
+      getSelectedOptionValue(
+        stateValues?.[CALLBACKS.singleThreadEodAssetTypeBlock]?.[CALLBACKS.singleThreadEodAssetTypeAction]
+      )
+    ),
+    totalTubeCount: getPlainTextValue(
+      stateValues,
+      CALLBACKS.eodTotalTubeCountBlock,
+      CALLBACKS.eodTotalTubeCountAction
+    )
   };
 }
 
@@ -859,7 +883,11 @@ function buildSingleThreadEodAssetStatusLine(asset: SingleThreadEodAssetState): 
   );
   const progressStatus =
     typeof asset.lastProgressValue === "number"
-      ? formatEodProgressCodeValue({ assetType: asset.assetType }, asset.lastProgressValue)
+      ? usesTubeCountForEod(asset)
+        ? typeof asset.totalTubeCount === "number"
+          ? `\`${String(asset.lastProgressValue)}/${String(asset.totalTubeCount)}\` tubes scanned`
+          : `\`${String(asset.lastProgressValue)}\` tubes scanned`
+        : formatEodProgressCodeValue({ assetType: asset.assetType }, asset.lastProgressValue)
       : "Pending";
   const reportStatus = asset.reportIssueKey
     ? buildLinkedJiraLabel(asset.reportIssueKey, asset.reportIssueKey)
@@ -2194,6 +2222,106 @@ export function registerSlackHandlers(app: App): void {
     }
   });
 
+  app.action(CALLBACKS.singleThreadEodTaskAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view?.private_metadata) {
+      logger.error("Single-thread EOD task selection action did not include a modal view.");
+      return;
+    }
+
+    let context: SingleThreadEodContext;
+
+    try {
+      context = decodeSingleThreadEodContext(body.view.private_metadata);
+    } catch (error) {
+      logger.error("Could not decode single-thread EOD context for task update.", error);
+      return;
+    }
+
+    const state = getSingleThreadEodModalStateValues(body.view.state.values);
+    const selectedTaskKey = getSelectedOptionValue(body.actions[0]);
+    const selectedTaskLabel = getSelectedOptionLabel(body.actions[0]);
+    const existingAsset = selectedTaskKey
+      ? context.assets.find((asset) => asset.parentTaskKey === selectedTaskKey)
+      : undefined;
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildSingleThreadEodReportModal(context, {
+            taskKey: selectedTaskKey,
+            taskLabel: selectedTaskLabel,
+            assetType: state.assetType ?? existingAsset?.assetType,
+            totalTubeCount:
+              state.totalTubeCount ??
+              (existingAsset?.totalTubeCount ? String(existingAsset.totalTubeCount) : undefined)
+          })
+        },
+        logger,
+        `Failed single-thread EOD task update for thread ${context.threadTs}`
+      );
+    } catch {
+      return;
+    }
+
+    logger.info(
+      `Updated single-thread EOD task for thread ${context.threadTs} to ${selectedTaskKey ?? "n/a"}`
+    );
+  });
+
+  app.action(CALLBACKS.singleThreadEodAssetTypeAction, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("view" in body) || !body.view?.private_metadata) {
+      logger.error("Single-thread EOD asset type action did not include a modal view.");
+      return;
+    }
+
+    let context: SingleThreadEodContext;
+
+    try {
+      context = decodeSingleThreadEodContext(body.view.private_metadata);
+    } catch (error) {
+      logger.error("Could not decode single-thread EOD context for asset type update.", error);
+      return;
+    }
+
+    const state = getSingleThreadEodModalStateValues(body.view.state.values);
+    const selectedAssetType = parseEodAssetType(getSelectedOptionValue(body.actions[0]));
+    const existingAsset = state.taskKey ? context.assets.find((asset) => asset.parentTaskKey === state.taskKey) : undefined;
+
+    try {
+      await updateModalView(
+        client,
+        {
+          viewId: body.view.id,
+          hash: body.view.hash,
+          view: buildSingleThreadEodReportModal(context, {
+            ...state,
+            assetType: selectedAssetType,
+            totalTubeCount:
+              selectedAssetType === "Boiler"
+                ? state.totalTubeCount ??
+                  (existingAsset?.totalTubeCount ? String(existingAsset.totalTubeCount) : undefined)
+                : undefined
+          })
+        },
+        logger,
+        `Failed single-thread EOD asset type update for thread ${context.threadTs}`
+      );
+    } catch {
+      return;
+    }
+
+    logger.info(
+      `Updated single-thread EOD asset type for thread ${context.threadTs} to ${selectedAssetType ?? "n/a"}`
+    );
+  });
+
   app.action(CALLBACKS.eodTaskAction, async ({ ack, body, client, logger }) => {
     await ack();
 
@@ -3042,6 +3170,8 @@ export function registerSlackHandlers(app: App): void {
         view.state.values[CALLBACKS.singleThreadEodAssetTypeBlock]?.[CALLBACKS.singleThreadEodAssetTypeAction]
       )
     );
+    const selectedTotalTubeCountValue =
+      getPlainTextValue(view.state.values, CALLBACKS.eodTotalTubeCountBlock, CALLBACKS.eodTotalTubeCountAction) ?? "";
 
     try {
       context = decodeSingleThreadEodContext(view.private_metadata);
@@ -3067,6 +3197,19 @@ export function registerSlackHandlers(app: App): void {
       fieldErrors[CALLBACKS.singleThreadEodAssetTypeBlock] = "Please choose an asset type.";
     }
 
+    const requiresBoilerTubeCount = assetType === "Boiler";
+
+    if (requiresBoilerTubeCount) {
+      const totalTubeCount = Number(selectedTotalTubeCountValue);
+
+      if (!selectedTotalTubeCountValue) {
+        fieldErrors[CALLBACKS.eodTotalTubeCountBlock] =
+          "Please enter the total number of tubes for this boiler.";
+      } else if (!Number.isInteger(totalTubeCount) || totalTubeCount <= 0) {
+        fieldErrors[CALLBACKS.eodTotalTubeCountBlock] = "Enter a whole number greater than 0.";
+      }
+    }
+
     if (Object.keys(fieldErrors).length > 0) {
       await ack({
         response_action: "errors",
@@ -3077,7 +3220,14 @@ export function registerSlackHandlers(app: App): void {
 
     const selectedParentTaskKey = parentTaskKey as string;
     const selectedAssetType = assetType as EodAssetType;
-    const validation = validateEodForm(view.state.values, { assetType: selectedAssetType });
+    const selectedTotalTubeCount =
+      requiresBoilerTubeCount && Number.isInteger(Number(selectedTotalTubeCountValue))
+        ? Number(selectedTotalTubeCountValue)
+        : undefined;
+    const validation = validateEodForm(view.state.values, {
+      assetType: selectedAssetType,
+      totalTubeCount: selectedTotalTubeCount
+    });
 
     if (!validation.success) {
       logger.info(
@@ -3118,6 +3268,7 @@ export function registerSlackHandlers(app: App): void {
         parentTaskLabel,
         parentTaskSummary,
         assetType: selectedAssetType,
+        totalTubeCount: selectedTotalTubeCount,
         requesterId: body.user.id,
         channelId: context.channelId,
         threadTs: context.threadTs
@@ -3183,6 +3334,7 @@ export function registerSlackHandlers(app: App): void {
         parentTaskSummary,
         assetType: selectedAssetType,
         lastProgressValue: validation.values.numberOfScansCompleted,
+        totalTubeCount: selectedTotalTubeCount,
         reportIssueKey: issue.key
       });
 

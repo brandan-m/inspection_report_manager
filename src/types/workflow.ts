@@ -176,6 +176,7 @@ export interface SingleThreadEodAssetState {
   parentTaskSummary: string;
   assetType: EodAssetType;
   lastProgressValue?: number;
+  totalTubeCount?: number;
   reportIssueKey?: string;
 }
 
