@@ -8,12 +8,17 @@ import {
 } from "../ehs/form.js";
 import type {
   BlockerType,
+  DataOpsCloseoutFormValues,
+  DataOpsProgressFormValues,
+  DataOpsValidationState,
+  DataOpsValidationThreadContext,
   EodAssetType,
   SingleThreadEodAssetState,
   SingleThreadEodContext,
   EodThreadLifecycleStatus,
   EhsFormValues,
   JiraDocNode,
+  JiraInlineNode,
   JiraTextNode,
   EodReportFormValues,
   EodThreadContext,
@@ -201,6 +206,20 @@ function selectedOption(value: string | undefined): PlainTextOption | undefined 
   };
 }
 
+function radioOption(value: string, text: string, description: string) {
+  return {
+    text: {
+      type: "plain_text" as const,
+      text
+    },
+    value,
+    description: {
+      type: "plain_text" as const,
+      text: truncateSlackOptionLine(description, 75)
+    }
+  };
+}
+
 function plainTextInputBlock(
   blockId: string,
   actionId: string,
@@ -282,6 +301,7 @@ export interface ModalStateValues {
   eodTaskLabel?: string;
   eodAssetType?: EodAssetType;
   eodTotalTubeCount?: string;
+  enableDataOpsValidation?: boolean;
   selectedIssueType?: SelectableIssueType;
   summary?: string;
   details?: string;
@@ -301,6 +321,16 @@ export interface SingleThreadEodModalStateValues {
   taskLabel?: string;
   assetType?: EodAssetType;
   totalTubeCount?: string;
+}
+
+export interface DataOpsProgressModalStateValues {
+  slug?: string;
+  ownerSlackUserId?: string;
+  percentCaptured?: string;
+  percentUploaded?: string;
+  percentValidated?: string;
+  percentPrep?: string;
+  percentQa?: string;
 }
 
 function isWorkflowWithBugFields(workflow: WorkflowDefinition): boolean {
@@ -641,6 +671,41 @@ export function buildCreateIssueModal(
           "*[TEST] Single Thread EOD*\nThis creates one root Slack thread for the selected Parent Epic. Use the `Generate EOD Report` button in that thread to file asset-level EOD reports."
       }
     });
+    blocks.push({
+      type: "input",
+      block_id: CALLBACKS.singleThreadEodDataOpsBlock,
+      element: {
+        type: "radio_buttons",
+        action_id: CALLBACKS.singleThreadEodDataOpsAction,
+        initial_option: state.enableDataOpsValidation
+          ? radioOption(
+              "enabled",
+              "Create Data Ops threads",
+              "Start validation threads for each asset after its first EOD report."
+            )
+          : radioOption(
+              "disabled",
+              "Regular EOD only",
+              "Keep the existing test single-thread EOD behavior without Data Ops validation threads."
+            ),
+        options: [
+          radioOption(
+            "enabled",
+            "Create Data Ops threads",
+            "Start validation threads for each asset after its first EOD report."
+          ),
+          radioOption(
+            "disabled",
+            "Regular EOD only",
+            "Keep the existing test single-thread EOD behavior without Data Ops validation threads."
+          )
+        ]
+      },
+      label: {
+        type: "plain_text",
+        text: "Data Ops Validation"
+      }
+    });
   } else if (!shouldCollectEodInThread(selectedIssueType)) {
     blocks.push(
       plainTextInputBlock(
@@ -705,15 +770,83 @@ export function encodeSingleThreadEodContext(context: SingleThreadEodContext): s
     pl: context.parentEpicLabel,
     ch: context.channelId,
     ts: context.threadTs,
+    dv: context.enableDataOpsValidation ? 1 : 0,
     a: context.assets.map((asset) => ({
       k: asset.parentTaskKey,
       s: asset.parentTaskSummary,
       t: asset.assetType,
       p: asset.lastProgressValue,
       tt: asset.totalTubeCount,
-      r: asset.reportIssueKey
+      r: asset.reportIssueKey,
+      d: asset.dataOps
+        ? {
+            ts: asset.dataOps.threadTs,
+            jk: asset.dataOps.jiraIssueKey,
+            sl: asset.dataOps.slug,
+            pc: asset.dataOps.percentCaptured,
+            pu: asset.dataOps.percentUploaded,
+            pv: asset.dataOps.percentValidated,
+            pp: asset.dataOps.percentPrep,
+            pq: asset.dataOps.percentQa,
+            ow: asset.dataOps.ownerSlackUserId,
+            dq: asset.dataOps.dataQuality,
+            fu: asset.dataOps.forecastUrl,
+            cu: asset.dataOps.cantileverUrl,
+            cb: asset.dataOps.closedOutByUserId,
+            ca: asset.dataOps.closedOutAt
+          }
+        : undefined
     }))
   });
+}
+
+function decodeDataOpsValidationState(value: unknown): DataOpsValidationState | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const dataOps = value as {
+    ts?: unknown;
+    jk?: unknown;
+    sl?: unknown;
+    pc?: unknown;
+    pu?: unknown;
+    pv?: unknown;
+    pp?: unknown;
+    pq?: unknown;
+    ow?: unknown;
+    dq?: unknown;
+    fu?: unknown;
+    cu?: unknown;
+    cb?: unknown;
+    ca?: unknown;
+  };
+
+  if (typeof dataOps.ts !== "string" || dataOps.ts.trim().length === 0) {
+    return undefined;
+  }
+
+  const numberOrUndefined = (input: unknown) =>
+    typeof input === "number" && Number.isFinite(input) ? input : undefined;
+  const stringOrUndefined = (input: unknown) =>
+    typeof input === "string" && input.trim().length > 0 ? input : undefined;
+
+  return {
+    threadTs: dataOps.ts,
+    jiraIssueKey: stringOrUndefined(dataOps.jk),
+    slug: stringOrUndefined(dataOps.sl),
+    percentCaptured: numberOrUndefined(dataOps.pc),
+    percentUploaded: numberOrUndefined(dataOps.pu),
+    percentValidated: numberOrUndefined(dataOps.pv),
+    percentPrep: numberOrUndefined(dataOps.pp),
+    percentQa: numberOrUndefined(dataOps.pq),
+    ownerSlackUserId: stringOrUndefined(dataOps.ow),
+    dataQuality: stringOrUndefined(dataOps.dq),
+    forecastUrl: stringOrUndefined(dataOps.fu),
+    cantileverUrl: stringOrUndefined(dataOps.cu),
+    closedOutByUserId: stringOrUndefined(dataOps.cb),
+    closedOutAt: stringOrUndefined(dataOps.ca)
+  };
 }
 
 function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetState | undefined {
@@ -728,6 +861,7 @@ function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetSt
     p?: unknown;
     tt?: unknown;
     r?: unknown;
+    d?: unknown;
   };
 
   if (
@@ -745,7 +879,8 @@ function decodeSingleThreadEodAssetState(value: unknown): SingleThreadEodAssetSt
     assetType: asset.t as EodAssetType,
     lastProgressValue: typeof asset.p === "number" && Number.isFinite(asset.p) ? asset.p : undefined,
     totalTubeCount: typeof asset.tt === "number" && Number.isFinite(asset.tt) && asset.tt > 0 ? asset.tt : undefined,
-    reportIssueKey: typeof asset.r === "string" && asset.r.trim().length > 0 ? asset.r : undefined
+    reportIssueKey: typeof asset.r === "string" && asset.r.trim().length > 0 ? asset.r : undefined,
+    dataOps: decodeDataOpsValidationState(asset.d)
   };
 }
 
@@ -810,6 +945,7 @@ export function decodeSingleThreadEodContext(value: string): SingleThreadEodCont
     pl?: unknown;
     ch?: unknown;
     ts?: unknown;
+    dv?: unknown;
     a?: unknown;
   };
 
@@ -834,7 +970,97 @@ export function decodeSingleThreadEodContext(value: string): SingleThreadEodCont
     parentEpicLabel: typeof parsed.pl === "string" && parsed.pl.trim().length > 0 ? parsed.pl : undefined,
     channelId: parsed.ch,
     threadTs: parsed.ts,
-    assets
+    assets,
+    enableDataOpsValidation: parsed.dv === 1
+  };
+}
+
+export function encodeDataOpsValidationThreadContext(context: DataOpsValidationThreadContext): string {
+  return JSON.stringify(context);
+}
+
+export function decodeDataOpsValidationThreadContext(value: string): DataOpsValidationThreadContext {
+  const parsed = JSON.parse(value) as Partial<DataOpsValidationThreadContext>;
+
+  if (
+    !parsed.workflowKey ||
+    !parsed.parentEpicKey ||
+    !parsed.channelId ||
+    !parsed.threadTs ||
+    !parsed.sourceThreadTs ||
+    !parsed.parentTaskKey ||
+    !parsed.parentTaskSummary ||
+    !parsed.assetType
+  ) {
+    throw new Error("Data Ops validation thread context is incomplete.");
+  }
+
+  return {
+    workflowKey: parsed.workflowKey,
+    parentEpicKey: parsed.parentEpicKey,
+    parentEpicLabel: parsed.parentEpicLabel,
+    channelId: parsed.channelId,
+    threadTs: parsed.threadTs,
+    sourceThreadTs: parsed.sourceThreadTs,
+    parentTaskKey: parsed.parentTaskKey,
+    parentTaskLabel: parsed.parentTaskLabel,
+    parentTaskSummary: parsed.parentTaskSummary,
+    assetType: parsed.assetType,
+    reportIssueKey:
+      typeof parsed.reportIssueKey === "string" && parsed.reportIssueKey.trim().length > 0
+        ? parsed.reportIssueKey
+        : undefined,
+    dataOps: {
+      jiraIssueKey:
+        typeof parsed.dataOps?.jiraIssueKey === "string" && parsed.dataOps.jiraIssueKey.trim().length > 0
+          ? parsed.dataOps.jiraIssueKey
+          : undefined,
+      slug: typeof parsed.dataOps?.slug === "string" && parsed.dataOps.slug.trim().length > 0 ? parsed.dataOps.slug : undefined,
+      percentCaptured:
+        typeof parsed.dataOps?.percentCaptured === "number" && Number.isFinite(parsed.dataOps.percentCaptured)
+          ? parsed.dataOps.percentCaptured
+          : undefined,
+      percentUploaded:
+        typeof parsed.dataOps?.percentUploaded === "number" && Number.isFinite(parsed.dataOps.percentUploaded)
+          ? parsed.dataOps.percentUploaded
+          : undefined,
+      percentValidated:
+        typeof parsed.dataOps?.percentValidated === "number" && Number.isFinite(parsed.dataOps.percentValidated)
+          ? parsed.dataOps.percentValidated
+          : undefined,
+      percentPrep:
+        typeof parsed.dataOps?.percentPrep === "number" && Number.isFinite(parsed.dataOps.percentPrep)
+          ? parsed.dataOps.percentPrep
+          : undefined,
+      percentQa:
+        typeof parsed.dataOps?.percentQa === "number" && Number.isFinite(parsed.dataOps.percentQa)
+          ? parsed.dataOps.percentQa
+          : undefined,
+      ownerSlackUserId:
+        typeof parsed.dataOps?.ownerSlackUserId === "string" && parsed.dataOps.ownerSlackUserId.trim().length > 0
+          ? parsed.dataOps.ownerSlackUserId
+          : undefined,
+      dataQuality:
+        typeof parsed.dataOps?.dataQuality === "string" && parsed.dataOps.dataQuality.trim().length > 0
+          ? parsed.dataOps.dataQuality
+          : undefined,
+      forecastUrl:
+        typeof parsed.dataOps?.forecastUrl === "string" && parsed.dataOps.forecastUrl.trim().length > 0
+          ? parsed.dataOps.forecastUrl
+          : undefined,
+      cantileverUrl:
+        typeof parsed.dataOps?.cantileverUrl === "string" && parsed.dataOps.cantileverUrl.trim().length > 0
+          ? parsed.dataOps.cantileverUrl
+          : undefined,
+      closedOutByUserId:
+        typeof parsed.dataOps?.closedOutByUserId === "string" && parsed.dataOps.closedOutByUserId.trim().length > 0
+          ? parsed.dataOps.closedOutByUserId
+          : undefined,
+      closedOutAt:
+        typeof parsed.dataOps?.closedOutAt === "string" && parsed.dataOps.closedOutAt.trim().length > 0
+          ? parsed.dataOps.closedOutAt
+          : undefined
+    }
   };
 }
 
@@ -1160,6 +1386,331 @@ export function buildSingleThreadEodReportModal(
         "Attachments (optional)"
       )
     ]
+  };
+}
+
+function formatDataOpsPercent(value?: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "";
+  }
+
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+export function buildDataOpsProgressModal(
+  context: DataOpsValidationThreadContext,
+  state: DataOpsProgressModalStateValues = {}
+) {
+  const initialSlug = state.slug ?? context.dataOps.slug;
+  const initialOwnerSlackUserId = state.ownerSlackUserId ?? context.dataOps.ownerSlackUserId;
+
+  return {
+    type: "modal" as const,
+    callback_id: CALLBACKS.dataOpsProgressView,
+    private_metadata: encodeDataOpsValidationThreadContext(context),
+    title: {
+      type: "plain_text" as const,
+      text: "Update Progress"
+    },
+    submit: {
+      type: "plain_text" as const,
+      text: "Save"
+    },
+    close: {
+      type: "plain_text" as const,
+      text: "Cancel"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `*Parent Inspection:* ${context.parentEpicLabel ?? context.parentEpicKey}\n` +
+            `*Asset:* ${context.parentTaskLabel ?? context.parentTaskSummary}\n` +
+            `*Component Type:* ${context.assetType}`
+        }
+      },
+      plainTextInputBlock(
+        CALLBACKS.dataOpsSlugBlock,
+        CALLBACKS.dataOpsSlugAction,
+        "Slug",
+        "Asset slug",
+        initialSlug
+      ),
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsOwnerBlock,
+        element: {
+          type: "users_select" as const,
+          action_id: CALLBACKS.dataOpsOwnerAction,
+          ...(initialOwnerSlackUserId ? { initial_user: initialOwnerSlackUserId } : {}),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "Choose the Data Ops owner"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "Owner"
+        }
+      },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsCapturedBlock,
+        element: {
+          type: "number_input" as const,
+          action_id: CALLBACKS.dataOpsCapturedAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          max_value: "100",
+          initial_value: state.percentCaptured ?? formatDataOpsPercent(context.dataOps.percentCaptured),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "% Captured"
+        }
+      },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsUploadedBlock,
+        element: {
+          type: "number_input" as const,
+          action_id: CALLBACKS.dataOpsUploadedAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          max_value: "100",
+          initial_value: state.percentUploaded ?? formatDataOpsPercent(context.dataOps.percentUploaded),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "% Uploaded"
+        }
+      },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsValidatedBlock,
+        element: {
+          type: "number_input" as const,
+          action_id: CALLBACKS.dataOpsValidatedAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          max_value: "100",
+          initial_value: state.percentValidated ?? formatDataOpsPercent(context.dataOps.percentValidated),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "% Validated"
+        }
+      },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsPrepBlock,
+        element: {
+          type: "number_input" as const,
+          action_id: CALLBACKS.dataOpsPrepAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          max_value: "100",
+          initial_value: state.percentPrep ?? formatDataOpsPercent(context.dataOps.percentPrep),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "% Prep"
+        }
+      },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsQaBlock,
+        element: {
+          type: "number_input" as const,
+          action_id: CALLBACKS.dataOpsQaAction,
+          is_decimal_allowed: true,
+          min_value: "0",
+          max_value: "100",
+          initial_value: state.percentQa ?? formatDataOpsPercent(context.dataOps.percentQa),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "0"
+          }
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "% QA"
+        }
+      }
+    ]
+  };
+}
+
+export function buildDataOpsCloseoutModal(context: DataOpsValidationThreadContext) {
+  return {
+    type: "modal" as const,
+    callback_id: CALLBACKS.dataOpsCloseoutView,
+    private_metadata: encodeDataOpsValidationThreadContext(context),
+    title: {
+      type: "plain_text" as const,
+      text: "Close Out Thread"
+    },
+    submit: {
+      type: "plain_text" as const,
+      text: "Close Out"
+    },
+    close: {
+      type: "plain_text" as const,
+      text: "Cancel"
+    },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text:
+            `*Asset:* ${context.parentTaskLabel ?? context.parentTaskSummary}\n` +
+            "*Add the final Data Ops closeout details for this validation thread.*"
+        }
+      },
+      plainTextInputBlock(
+        CALLBACKS.dataOpsQualityBlock,
+        CALLBACKS.dataOpsQualityAction,
+        "Data Quality",
+        "Final data quality notes",
+        context.dataOps.dataQuality,
+        true
+      ),
+      plainTextInputBlock(
+        CALLBACKS.dataOpsForecastUrlBlock,
+        CALLBACKS.dataOpsForecastUrlAction,
+        "Forecast URL",
+        "https://...",
+        context.dataOps.forecastUrl
+      ),
+      plainTextInputBlock(
+        CALLBACKS.dataOpsCantileverUrlBlock,
+        CALLBACKS.dataOpsCantileverUrlAction,
+        "Cantilever URL",
+        "https://...",
+        context.dataOps.cantileverUrl
+      )
+    ]
+  };
+}
+
+export function buildDataOpsIssueSummary(context: DataOpsValidationThreadContext): string {
+  return `${context.parentTaskSummary} Data Ops Validation`.replace(/\s+/g, " ").trim();
+}
+
+export function formatDataOpsIssueDetails(
+  context: DataOpsValidationThreadContext,
+  values: DataOpsProgressFormValues
+): string {
+  const lines = [
+    `Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`,
+    `Asset: ${context.parentTaskSummary}`,
+    `Component Type: ${context.assetType}`,
+    `Slug: ${values.slug}`,
+    `Owner: ${values.ownerSlackUserId}`,
+    `% Captured: ${values.percentCaptured}%`,
+    `% Uploaded: ${values.percentUploaded}%`,
+    `% Validated: ${values.percentValidated}%`,
+    `% Prep: ${values.percentPrep}%`,
+    `% QA: ${values.percentQa}%`
+  ];
+
+  if (context.reportIssueKey) {
+    lines.push(`Latest EOD Report: ${context.reportIssueKey}`);
+  }
+
+  if (context.dataOps.dataQuality) {
+    lines.push(`Data Quality: ${context.dataOps.dataQuality}`);
+  }
+
+  if (context.dataOps.forecastUrl) {
+    lines.push(`Forecast URL: ${context.dataOps.forecastUrl}`);
+  }
+
+  if (context.dataOps.cantileverUrl) {
+    lines.push(`Cantilever URL: ${context.dataOps.cantileverUrl}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function buildDataOpsDescriptionContent(
+  context: DataOpsValidationThreadContext,
+  values: DataOpsProgressFormValues,
+  ownerContent?: JiraInlineNode[]
+): JiraDocNode[] {
+  const content: JiraDocNode[] = [
+    jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
+    jiraParagraph("Asset", context.parentTaskSummary),
+    jiraParagraph("Component Type", context.assetType),
+    jiraParagraph("Slug", values.slug),
+    {
+      type: "paragraph",
+      content: [
+        jiraText("Owner: ", [{ type: "strong" }]),
+        ...(ownerContent?.length ? ownerContent : [jiraText(values.ownerSlackUserId)])
+      ]
+    },
+    jiraParagraph("% Captured", `${formatDataOpsPercent(values.percentCaptured)}%`),
+    jiraParagraph("% Uploaded", `${formatDataOpsPercent(values.percentUploaded)}%`),
+    jiraParagraph("% Validated", `${formatDataOpsPercent(values.percentValidated)}%`),
+    jiraParagraph("% Prep", `${formatDataOpsPercent(values.percentPrep)}%`),
+    jiraParagraph("% QA", `${formatDataOpsPercent(values.percentQa)}%`)
+  ];
+
+  if (context.reportIssueKey) {
+    content.push(jiraParagraph("Latest EOD Report", context.reportIssueKey));
+  }
+
+  if (context.dataOps.dataQuality) {
+    content.push(jiraParagraph("Data Quality", context.dataOps.dataQuality));
+  }
+
+  if (context.dataOps.forecastUrl) {
+    content.push(jiraParagraph("Forecast URL", context.dataOps.forecastUrl));
+  }
+
+  if (context.dataOps.cantileverUrl) {
+    content.push(jiraParagraph("Cantilever URL", context.dataOps.cantileverUrl));
+  }
+
+  return content;
+}
+
+export function applyDataOpsCloseoutToContext(
+  context: DataOpsValidationThreadContext,
+  values: DataOpsCloseoutFormValues,
+  closedOutByUserId: string,
+  closedOutAt: string
+): DataOpsValidationThreadContext {
+  return {
+    ...context,
+    dataOps: {
+      ...context.dataOps,
+      dataQuality: values.dataQuality.trim(),
+      forecastUrl: values.forecastUrl.trim(),
+      cantileverUrl: values.cantileverUrl.trim(),
+      closedOutByUserId,
+      closedOutAt
+    }
   };
 }
 

@@ -13,11 +13,16 @@ import {
 } from "../ehs/form.js";
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
+import { updateIssue } from "../jira/updateIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
 import { buildParentSearchJql, getIssueDetails, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
 import { linkIssuesByRelationship } from "../jira/issueLinks.js";
 import type {
   BlockerType,
+  DataOpsCloseoutFormValues,
+  DataOpsProgressFormValues,
+  DataOpsValidationState,
+  DataOpsValidationThreadContext,
   EodAssetType,
   SelectableIssueType,
   EhsFormValues,
@@ -30,13 +35,21 @@ import type {
 } from "../types/workflow.js";
 import { CALLBACKS } from "./constants.js";
 import {
+  applyDataOpsCloseoutToContext,
+  buildDataOpsCloseoutModal,
+  buildDataOpsDescriptionContent,
+  buildDataOpsIssueSummary,
+  buildDataOpsProgressModal,
+  formatDataOpsIssueDetails,
   buildIssueSelectOption,
   buildEodDescriptionContent,
   buildEodReportSummary,
   buildCreateIssueModal,
+  decodeDataOpsValidationThreadContext,
   buildEodReportModal,
   buildSingleThreadEodReportModal,
   buildEhsDescriptionContent,
+  encodeDataOpsValidationThreadContext,
   decodeEodThreadContext,
   decodeSingleThreadEodContext,
   encodeSingleThreadEodContext,
@@ -175,6 +188,20 @@ function getSelectedConversationValue(
 
   if (action && "selected_conversation" in action) {
     return action.selected_conversation ?? undefined;
+  }
+
+  return undefined;
+}
+
+function getSelectedUserValue(
+  stateValues: ModalState | undefined,
+  blockId: string,
+  actionId: string
+): string | undefined {
+  const action = stateValues?.[blockId]?.[actionId];
+
+  if (action && "selected_user" in action) {
+    return action.selected_user ?? undefined;
   }
 
   return undefined;
@@ -378,6 +405,10 @@ function getModalStateValues(stateValues?: ModalState) {
       CALLBACKS.eodTotalTubeCountBlock,
       CALLBACKS.eodTotalTubeCountAction
     ),
+    enableDataOpsValidation:
+      getSelectedOptionValue(
+        stateValues?.[CALLBACKS.singleThreadEodDataOpsBlock]?.[CALLBACKS.singleThreadEodDataOpsAction]
+      ) === "enabled",
     summary: getPlainTextValue(stateValues, CALLBACKS.summaryBlock, CALLBACKS.summaryAction),
     details: getPlainTextValue(stateValues, CALLBACKS.detailsBlock, CALLBACKS.detailsAction),
     blockerType: parseBlockerType(blockerTypeValue),
@@ -406,6 +437,18 @@ function getSingleThreadEodModalStateValues(stateValues?: ModalState): SingleThr
       CALLBACKS.eodTotalTubeCountBlock,
       CALLBACKS.eodTotalTubeCountAction
     )
+  };
+}
+
+function getDataOpsProgressModalStateValues(stateValues?: ModalState) {
+  return {
+    slug: getPlainTextValue(stateValues, CALLBACKS.dataOpsSlugBlock, CALLBACKS.dataOpsSlugAction),
+    ownerSlackUserId: getSelectedUserValue(stateValues, CALLBACKS.dataOpsOwnerBlock, CALLBACKS.dataOpsOwnerAction),
+    percentCaptured: getPlainTextValue(stateValues, CALLBACKS.dataOpsCapturedBlock, CALLBACKS.dataOpsCapturedAction),
+    percentUploaded: getPlainTextValue(stateValues, CALLBACKS.dataOpsUploadedBlock, CALLBACKS.dataOpsUploadedAction),
+    percentValidated: getPlainTextValue(stateValues, CALLBACKS.dataOpsValidatedBlock, CALLBACKS.dataOpsValidatedAction),
+    percentPrep: getPlainTextValue(stateValues, CALLBACKS.dataOpsPrepBlock, CALLBACKS.dataOpsPrepAction),
+    percentQa: getPlainTextValue(stateValues, CALLBACKS.dataOpsQaBlock, CALLBACKS.dataOpsQaAction)
   };
 }
 
@@ -452,6 +495,183 @@ function isEodScopeComplete(
 
 function formatPercentValue(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function parsePercentInput(value?: string): number | undefined {
+  if (!value?.trim()) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function validatePercentField(
+  rawValue: string | undefined,
+  blockId: string,
+  label: string,
+  errors: Record<string, string>
+): number | undefined {
+  const value = parsePercentInput(rawValue);
+
+  if (typeof value !== "number") {
+    errors[blockId] = `${label} is required.`;
+    return undefined;
+  }
+
+  if (value < 0 || value > 100) {
+    errors[blockId] = `${label} must be between 0 and 100.`;
+    return undefined;
+  }
+
+  return value;
+}
+
+function validateDataOpsProgressForm(values: ModalState | undefined):
+  | { success: true; values: DataOpsProgressFormValues }
+  | { success: false; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+  const slug = getPlainTextValue(values, CALLBACKS.dataOpsSlugBlock, CALLBACKS.dataOpsSlugAction)?.trim();
+  const ownerSlackUserId = getSelectedUserValue(values, CALLBACKS.dataOpsOwnerBlock, CALLBACKS.dataOpsOwnerAction);
+
+  if (!slug) {
+    errors[CALLBACKS.dataOpsSlugBlock] = "Slug is required.";
+  }
+
+  if (!ownerSlackUserId) {
+    errors[CALLBACKS.dataOpsOwnerBlock] = "Owner is required.";
+  }
+
+  const percentCaptured = validatePercentField(
+    getPlainTextValue(values, CALLBACKS.dataOpsCapturedBlock, CALLBACKS.dataOpsCapturedAction),
+    CALLBACKS.dataOpsCapturedBlock,
+    "% Captured",
+    errors
+  );
+  const percentUploaded = validatePercentField(
+    getPlainTextValue(values, CALLBACKS.dataOpsUploadedBlock, CALLBACKS.dataOpsUploadedAction),
+    CALLBACKS.dataOpsUploadedBlock,
+    "% Uploaded",
+    errors
+  );
+  const percentValidated = validatePercentField(
+    getPlainTextValue(values, CALLBACKS.dataOpsValidatedBlock, CALLBACKS.dataOpsValidatedAction),
+    CALLBACKS.dataOpsValidatedBlock,
+    "% Validated",
+    errors
+  );
+  const percentPrep = validatePercentField(
+    getPlainTextValue(values, CALLBACKS.dataOpsPrepBlock, CALLBACKS.dataOpsPrepAction),
+    CALLBACKS.dataOpsPrepBlock,
+    "% Prep",
+    errors
+  );
+  const percentQa = validatePercentField(
+    getPlainTextValue(values, CALLBACKS.dataOpsQaBlock, CALLBACKS.dataOpsQaAction),
+    CALLBACKS.dataOpsQaBlock,
+    "% QA",
+    errors
+  );
+
+  if (Object.keys(errors).length > 0 || !slug || !ownerSlackUserId) {
+    return {
+      success: false,
+      errors
+    };
+  }
+
+  return {
+    success: true,
+    values: {
+      slug,
+      ownerSlackUserId,
+      percentCaptured: percentCaptured as number,
+      percentUploaded: percentUploaded as number,
+      percentValidated: percentValidated as number,
+      percentPrep: percentPrep as number,
+      percentQa: percentQa as number
+    }
+  };
+}
+
+function isLikelyUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function validateDataOpsCloseoutForm(values: ModalState | undefined):
+  | { success: true; values: DataOpsCloseoutFormValues }
+  | { success: false; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+  const dataQuality = getPlainTextValue(values, CALLBACKS.dataOpsQualityBlock, CALLBACKS.dataOpsQualityAction)?.trim();
+  const forecastUrl =
+    getPlainTextValue(values, CALLBACKS.dataOpsForecastUrlBlock, CALLBACKS.dataOpsForecastUrlAction)?.trim();
+  const cantileverUrl =
+    getPlainTextValue(values, CALLBACKS.dataOpsCantileverUrlBlock, CALLBACKS.dataOpsCantileverUrlAction)?.trim();
+
+  if (!dataQuality) {
+    errors[CALLBACKS.dataOpsQualityBlock] = "Data quality is required.";
+  }
+
+  if (!forecastUrl) {
+    errors[CALLBACKS.dataOpsForecastUrlBlock] = "Forecast URL is required.";
+  } else if (!isLikelyUrl(forecastUrl)) {
+    errors[CALLBACKS.dataOpsForecastUrlBlock] = "Forecast URL must start with http:// or https://.";
+  }
+
+  if (!cantileverUrl) {
+    errors[CALLBACKS.dataOpsCantileverUrlBlock] = "Cantilever URL is required.";
+  } else if (!isLikelyUrl(cantileverUrl)) {
+    errors[CALLBACKS.dataOpsCantileverUrlBlock] = "Cantilever URL must start with http:// or https://.";
+  }
+
+  if (Object.keys(errors).length > 0 || !dataQuality || !forecastUrl || !cantileverUrl) {
+    return {
+      success: false,
+      errors
+    };
+  }
+
+  return {
+    success: true,
+    values: {
+      dataQuality,
+      forecastUrl,
+      cantileverUrl
+    }
+  };
+}
+
+function getStoredDataOpsProgressValues(
+  context: DataOpsValidationThreadContext
+): DataOpsProgressFormValues | undefined {
+  const dataOps = context.dataOps;
+
+  if (
+    !dataOps.slug ||
+    !dataOps.ownerSlackUserId ||
+    dataOps.percentCaptured === undefined ||
+    dataOps.percentUploaded === undefined ||
+    dataOps.percentValidated === undefined ||
+    dataOps.percentPrep === undefined ||
+    dataOps.percentQa === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    slug: dataOps.slug,
+    ownerSlackUserId: dataOps.ownerSlackUserId,
+    percentCaptured: dataOps.percentCaptured,
+    percentUploaded: dataOps.percentUploaded,
+    percentValidated: dataOps.percentValidated,
+    percentPrep: dataOps.percentPrep,
+    percentQa: dataOps.percentQa
+  };
 }
 
 function clearEodTaskSelectionIfParentChanged(
@@ -955,15 +1175,146 @@ async function updateSingleThreadEodRootMessage(client: App["client"], context: 
   });
 }
 
+function buildDataOpsValidationThreadMessage(context: DataOpsValidationThreadContext) {
+  const assetTask = buildLinkedJiraLabel(context.parentTaskKey, context.parentTaskSummary);
+  const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
+  const dataOpsIssue = context.dataOps.jiraIssueKey
+    ? buildLinkedJiraLabel(context.dataOps.jiraIssueKey, context.dataOps.jiraIssueKey)
+    : "Pending";
+  const owner = context.dataOps.ownerSlackUserId ? `<@${context.dataOps.ownerSlackUserId}>` : "Pending";
+  const statusLines = [
+    `*Linked Jira:* ${dataOpsIssue}`,
+    `*Slug:* ${escapeSlackText(context.dataOps.slug ?? "Pending")}`,
+    `*Owner:* ${owner}`,
+    `*% Captured:* ${context.dataOps.percentCaptured !== undefined ? `\`${formatPercentValue(context.dataOps.percentCaptured)}%\`` : "Pending"}`,
+    `*% Uploaded:* ${context.dataOps.percentUploaded !== undefined ? `\`${formatPercentValue(context.dataOps.percentUploaded)}%\`` : "Pending"}`,
+    `*% Validated:* ${context.dataOps.percentValidated !== undefined ? `\`${formatPercentValue(context.dataOps.percentValidated)}%\`` : "Pending"}`,
+    `*% Prep:* ${context.dataOps.percentPrep !== undefined ? `\`${formatPercentValue(context.dataOps.percentPrep)}%\`` : "Pending"}`,
+    `*% QA:* ${context.dataOps.percentQa !== undefined ? `\`${formatPercentValue(context.dataOps.percentQa)}%\`` : "Pending"}`
+  ];
+
+  if (context.reportIssueKey) {
+    statusLines.push(`*Latest EOD Report:* ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`);
+  }
+
+  if (context.dataOps.dataQuality) {
+    statusLines.push(`*Data Quality:* ${escapeSlackText(context.dataOps.dataQuality)}`);
+  }
+
+  if (context.dataOps.forecastUrl) {
+    statusLines.push(`*Forecast URL:* ${escapeSlackText(context.dataOps.forecastUrl)}`);
+  }
+
+  if (context.dataOps.cantileverUrl) {
+    statusLines.push(`*Cantilever URL:* ${escapeSlackText(context.dataOps.cantileverUrl)}`);
+  }
+
+  if (context.dataOps.closedOutByUserId) {
+    statusLines.push(`*Closed Out By:* <@${context.dataOps.closedOutByUserId}>`);
+  }
+
+  if (context.dataOps.closedOutAt) {
+    statusLines.push(`*Closed Out At:* ${formatSlackDateTime(context.dataOps.closedOutAt)}`);
+  }
+
+  return {
+    text: `${context.parentTaskSummary} Data Ops Validation thread`,
+    blocks: [
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text:
+            `*${escapeSlackText(context.parentTaskSummary)} Data Ops Validation Thread*\n` +
+            `*Parent Inspection:* ${parentInspection}\n` +
+            `*Asset:* ${assetTask}\n` +
+            `*Component Type:* ${escapeSlackText(context.assetType)}`
+        }
+      },
+      {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: statusLines.join("\n")
+        }
+      },
+      {
+        type: "actions" as const,
+        elements: [
+          {
+            type: "button" as const,
+            action_id: CALLBACKS.dataOpsUpdateButton,
+            text: {
+              type: "plain_text" as const,
+              text: "Update Progress"
+            },
+            value: encodeDataOpsValidationThreadContext(context)
+          },
+          {
+            type: "button" as const,
+            action_id: CALLBACKS.dataOpsCloseoutButton,
+            text: {
+              type: "plain_text" as const,
+              text: context.dataOps.closedOutAt ? "Update Closeout" : "Close Out Thread"
+            },
+            style: "primary",
+            value: encodeDataOpsValidationThreadContext(context)
+          }
+        ]
+      }
+    ]
+  };
+}
+
+async function updateDataOpsValidationThreadRootMessage(
+  client: App["client"],
+  context: DataOpsValidationThreadContext
+) {
+  const message = buildDataOpsValidationThreadMessage(context);
+
+  await client.chat.update({
+    channel: context.channelId,
+    ts: context.threadTs,
+    text: message.text,
+    blocks: message.blocks
+  });
+}
+
 function upsertSingleThreadEodAssetState(
   context: SingleThreadEodContext,
   asset: SingleThreadEodAssetState
 ): SingleThreadEodContext {
+  const existingAsset = context.assets.find((item) => item.parentTaskKey === asset.parentTaskKey);
   const remainingAssets = context.assets.filter((item) => item.parentTaskKey !== asset.parentTaskKey);
 
   return {
     ...context,
-    assets: [asset, ...remainingAssets]
+    assets: [
+      {
+        ...existingAsset,
+        ...asset,
+        dataOps: asset.dataOps ?? existingAsset?.dataOps
+      },
+      ...remainingAssets
+    ]
+  };
+}
+
+function syncDataOpsStateToSingleThreadContext(
+  context: SingleThreadEodContext,
+  parentTaskKey: string,
+  dataOps: DataOpsValidationState
+): SingleThreadEodContext {
+  return {
+    ...context,
+    assets: context.assets.map((asset) =>
+      asset.parentTaskKey === parentTaskKey
+        ? {
+            ...asset,
+            dataOps
+          }
+        : asset
+    )
   };
 }
 
@@ -1408,6 +1759,28 @@ async function createSingleThreadEodRootThread(
     assets: []
   };
   await updateSingleThreadEodRootMessage(client, threadContext);
+
+  return threadContext;
+}
+
+async function createDataOpsValidationThread(
+  client: App["client"],
+  context: Omit<DataOpsValidationThreadContext, "threadTs">
+) {
+  const starter = await client.chat.postMessage({
+    channel: context.channelId,
+    text: `${context.parentTaskSummary} Data Ops Validation thread`
+  });
+
+  if (!starter.ts) {
+    throw new Error("Slack did not return a thread timestamp for the Data Ops validation thread.");
+  }
+
+  const threadContext: DataOpsValidationThreadContext = {
+    ...context,
+    threadTs: starter.ts
+  };
+  await updateDataOpsValidationThreadRootMessage(client, threadContext);
 
   return threadContext;
 }
@@ -2025,6 +2398,68 @@ export function registerSlackHandlers(app: App): void {
     });
 
     logger.info(`Opened single-thread EOD intake modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.dataOpsUpdateButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("trigger_id" in body)) {
+      logger.error("Data Ops update action did not include a trigger_id.");
+      return;
+    }
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("Data Ops update action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("Data Ops update action did not include thread context.");
+      return;
+    }
+
+    const context = decodeDataOpsValidationThreadContext(contextValue);
+
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildDataOpsProgressModal(context)
+    });
+
+    logger.info(`Opened Data Ops progress modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.dataOpsCloseoutButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("trigger_id" in body)) {
+      logger.error("Data Ops closeout action did not include a trigger_id.");
+      return;
+    }
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("Data Ops closeout action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("Data Ops closeout action did not include thread context.");
+      return;
+    }
+
+    const context = decodeDataOpsValidationThreadContext(contextValue);
+
+    await client.views.open({
+      trigger_id: body.trigger_id,
+      view: buildDataOpsCloseoutModal(context)
+    });
+
+    logger.info(`Opened Data Ops closeout modal for thread ${context.threadTs}`);
   });
 
   app.action(CALLBACKS.eodScansCompletedAction, async ({ ack, body, logger }) => {
@@ -2725,7 +3160,8 @@ export function registerSlackHandlers(app: App): void {
           workflowKey: workflow.key,
           parentEpicKey,
           parentEpicLabel,
-          channelId: getEodChannelId(channelId)
+          channelId: getEodChannelId(channelId),
+          enableDataOpsValidation: getModalStateValues(values).enableDataOpsValidation
         });
 
         await trySendDirectMessage(
@@ -3260,6 +3696,7 @@ export function registerSlackHandlers(app: App): void {
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
       const parentTaskSummary = await getIssueSummary(selectedParentTaskKey);
+      const existingAsset = context.assets.find((asset) => asset.parentTaskKey === selectedParentTaskKey);
       const assetContext: EodThreadContext = {
         workflowKey: context.workflowKey,
         parentEpicKey: context.parentEpicKey,
@@ -3335,10 +3772,40 @@ export function registerSlackHandlers(app: App): void {
         assetType: selectedAssetType,
         lastProgressValue: validation.values.numberOfScansCompleted,
         totalTubeCount: selectedTotalTubeCount,
-        reportIssueKey: issue.key
+        reportIssueKey: issue.key,
+        dataOps: existingAsset?.dataOps
       });
 
       await updateSingleThreadEodRootMessage(client, updatedRootContext);
+
+      if (context.enableDataOpsValidation && !existingAsset?.dataOps?.threadTs) {
+        const dataOpsThreadContext = await createDataOpsValidationThread(client, {
+          workflowKey: context.workflowKey,
+          parentEpicKey: context.parentEpicKey,
+          parentEpicLabel: context.parentEpicLabel,
+          channelId: context.channelId,
+          sourceThreadTs: context.threadTs,
+          parentTaskKey: selectedParentTaskKey,
+          parentTaskLabel,
+          parentTaskSummary,
+          assetType: selectedAssetType,
+          reportIssueKey: issue.key,
+          dataOps: {}
+        });
+
+        const rootContextWithDataOps = syncDataOpsStateToSingleThreadContext(updatedRootContext, selectedParentTaskKey, {
+          threadTs: dataOpsThreadContext.threadTs
+        });
+
+        await updateSingleThreadEodRootMessage(client, rootContextWithDataOps);
+        await client.chat.postMessage({
+          channel: context.channelId,
+          thread_ts: context.threadTs,
+          text:
+            `Started a Data Ops validation thread for ${parentTaskSummary}. ` +
+            "Open the new channel thread to track validation progress."
+        });
+      }
 
       const completionMessage = buildEodCompletionMessage({
         issueKey: issue.key,
@@ -3450,6 +3917,186 @@ export function registerSlackHandlers(app: App): void {
         undefined,
         logger
       );
+    }
+  });
+
+  app.view(CALLBACKS.dataOpsProgressView, async ({ ack, body, client, logger, view }) => {
+    let context: DataOpsValidationThreadContext;
+
+    try {
+      context = decodeDataOpsValidationThreadContext(view.private_metadata);
+    } catch (error) {
+      logger.error(error);
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.dataOpsSlugBlock]: "Could not load the Data Ops thread context. Please try again."
+        }
+      });
+      return;
+    }
+
+    const validation = validateDataOpsProgressForm(view.state.values);
+
+    if (!validation.success) {
+      await ack({
+        response_action: "errors",
+        errors: validation.errors
+      });
+      return;
+    }
+
+    await ack();
+
+    try {
+      const workflow = getWorkflowByKey(context.workflowKey);
+      const updatedContext: DataOpsValidationThreadContext = {
+        ...context,
+        dataOps: {
+          ...context.dataOps,
+          slug: validation.values.slug,
+          ownerSlackUserId: validation.values.ownerSlackUserId,
+          percentCaptured: validation.values.percentCaptured,
+          percentUploaded: validation.values.percentUploaded,
+          percentValidated: validation.values.percentValidated,
+          percentPrep: validation.values.percentPrep,
+          percentQa: validation.values.percentQa
+        }
+      };
+      const ownerContent = [await createSlackToJiraMentionResolver(client, logger)(validation.values.ownerSlackUserId)];
+      const summary = buildDataOpsIssueSummary(updatedContext);
+      const details = formatDataOpsIssueDetails(updatedContext, validation.values);
+
+      if (!updatedContext.dataOps.jiraIssueKey) {
+        const issue = await createIssue({
+          workflow,
+          issueType: "Data Ops",
+          parentEpicKey: updatedContext.parentEpicKey,
+          summary,
+          details,
+          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent),
+          requesterContent: [await createSlackToJiraMentionResolver(client, logger)(body.user.id)],
+          requesterName: body.user.id
+        });
+
+        updatedContext.dataOps.jiraIssueKey = issue.key;
+
+        try {
+          await linkIssuesByRelationship({
+            issueKey: issue.key,
+            relatedIssueKey: updatedContext.parentTaskKey,
+            relationshipText: "Connects to"
+          });
+        } catch (error) {
+          logger.warn(
+            `Could not link Data Ops Jira issue ${issue.key} to asset task ${updatedContext.parentTaskKey}: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        }
+
+        await trySendDirectMessage(
+          client,
+          body.user.id,
+          `Created Jira issue ${issue.key} in project ${workflow.jiraProjectKey}.`,
+          undefined,
+          logger
+        );
+      } else {
+        await updateIssue({
+          issueKey: updatedContext.dataOps.jiraIssueKey,
+          summary,
+          details,
+          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent)
+        });
+      }
+
+      await updateDataOpsValidationThreadRootMessage(client, updatedContext);
+      await client.chat.postMessage({
+        channel: updatedContext.channelId,
+        thread_ts: updatedContext.threadTs,
+        text:
+          `${updatedContext.dataOps.jiraIssueKey ? `Saved progress to ${updatedContext.dataOps.jiraIssueKey}.` : "Saved progress."}`
+      });
+    } catch (error) {
+      logger.error(error);
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Could not save Data Ops progress: ${formatJiraErrorMessage(error)}`
+      });
+    }
+  });
+
+  app.view(CALLBACKS.dataOpsCloseoutView, async ({ ack, body, client, logger, view }) => {
+    let context: DataOpsValidationThreadContext;
+
+    try {
+      context = decodeDataOpsValidationThreadContext(view.private_metadata);
+    } catch (error) {
+      logger.error(error);
+      await ack({
+        response_action: "errors",
+        errors: {
+          [CALLBACKS.dataOpsQualityBlock]: "Could not load the Data Ops thread context. Please try again."
+        }
+      });
+      return;
+    }
+
+    const validation = validateDataOpsCloseoutForm(view.state.values);
+
+    if (!validation.success) {
+      await ack({
+        response_action: "errors",
+        errors: validation.errors
+      });
+      return;
+    }
+
+    await ack();
+
+    try {
+      const closedOutAt = new Date().toISOString();
+      const updatedContext = applyDataOpsCloseoutToContext(
+        context,
+        validation.values,
+        body.user.id,
+        closedOutAt
+      );
+
+      if (updatedContext.dataOps.jiraIssueKey) {
+        const progressValues = getStoredDataOpsProgressValues(updatedContext);
+
+        if (progressValues) {
+          const ownerContent = updatedContext.dataOps.ownerSlackUserId
+            ? [await createSlackToJiraMentionResolver(client, logger)(updatedContext.dataOps.ownerSlackUserId)]
+            : undefined;
+          await updateIssue({
+            issueKey: updatedContext.dataOps.jiraIssueKey,
+            summary: buildDataOpsIssueSummary(updatedContext),
+            details: formatDataOpsIssueDetails(updatedContext, progressValues),
+            descriptionContent: buildDataOpsDescriptionContent(updatedContext, progressValues, ownerContent)
+          });
+        }
+      }
+
+      await updateDataOpsValidationThreadRootMessage(client, updatedContext);
+      await client.chat.postMessage({
+        channel: updatedContext.channelId,
+        thread_ts: updatedContext.threadTs,
+        text:
+          updatedContext.dataOps.jiraIssueKey
+            ? `Closed out the Data Ops validation thread and updated ${updatedContext.dataOps.jiraIssueKey}.`
+            : "Closed out the Data Ops validation thread."
+      });
+    } catch (error) {
+      logger.error(error);
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Could not close out the Data Ops thread: ${formatJiraErrorMessage(error)}`
+      });
     }
   });
 }

@@ -1,4 +1,4 @@
-export type JiraIssueType = "Bug" | "EOD Report" | "Task" | "Epic";
+export type JiraIssueType = "Bug" | "EOD Report" | "Task" | "Data Ops" | "Epic";
 export type SupportedIssueType = JiraIssueType | "[TEST] Single Thread EOD";
 export type SelectableIssueType = Exclude<SupportedIssueType, "Epic">;
 export type BlockerType = "Customer" | "Operations" | "Environmental" | "Other";
@@ -171,6 +171,23 @@ export interface EodThreadContext {
   closedOutAt?: string;
 }
 
+export interface DataOpsValidationState {
+  threadTs: string;
+  jiraIssueKey?: string;
+  slug?: string;
+  percentCaptured?: number;
+  percentUploaded?: number;
+  percentValidated?: number;
+  percentPrep?: number;
+  percentQa?: number;
+  ownerSlackUserId?: string;
+  dataQuality?: string;
+  forecastUrl?: string;
+  cantileverUrl?: string;
+  closedOutByUserId?: string;
+  closedOutAt?: string;
+}
+
 export interface SingleThreadEodAssetState {
   parentTaskKey: string;
   parentTaskSummary: string;
@@ -178,6 +195,7 @@ export interface SingleThreadEodAssetState {
   lastProgressValue?: number;
   totalTubeCount?: number;
   reportIssueKey?: string;
+  dataOps?: DataOpsValidationState;
 }
 
 export interface SingleThreadEodContext {
@@ -187,6 +205,38 @@ export interface SingleThreadEodContext {
   channelId: string;
   threadTs: string;
   assets: SingleThreadEodAssetState[];
+  enableDataOpsValidation?: boolean;
+}
+
+export interface DataOpsValidationThreadContext {
+  workflowKey: string;
+  parentEpicKey: string;
+  parentEpicLabel?: string;
+  channelId: string;
+  threadTs: string;
+  sourceThreadTs: string;
+  parentTaskKey: string;
+  parentTaskLabel?: string;
+  parentTaskSummary: string;
+  assetType: EodAssetType;
+  reportIssueKey?: string;
+  dataOps: Omit<DataOpsValidationState, "threadTs">;
+}
+
+export interface DataOpsProgressFormValues {
+  slug: string;
+  ownerSlackUserId: string;
+  percentCaptured: number;
+  percentUploaded: number;
+  percentValidated: number;
+  percentPrep: number;
+  percentQa: number;
+}
+
+export interface DataOpsCloseoutFormValues {
+  dataQuality: string;
+  forecastUrl: string;
+  cantileverUrl: string;
 }
 
 export interface EhsFormValues {
