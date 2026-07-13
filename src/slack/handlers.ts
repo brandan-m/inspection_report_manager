@@ -1177,45 +1177,12 @@ async function updateSingleThreadEodRootMessage(client: App["client"], context: 
 
 function buildDataOpsValidationThreadMessage(context: DataOpsValidationThreadContext) {
   const assetTask = buildLinkedJiraLabel(context.parentTaskKey, context.parentTaskSummary);
-  const parentInspection = buildLinkedJiraLabel(context.parentEpicKey, getParentInspectionLabel(context));
-  const dataOpsIssue = context.dataOps.jiraIssueKey
-    ? buildLinkedJiraLabel(context.dataOps.jiraIssueKey, context.dataOps.jiraIssueKey)
-    : "Pending";
-  const owner = context.dataOps.ownerSlackUserId ? `<@${context.dataOps.ownerSlackUserId}>` : "Pending";
+  const statusLabel = context.dataOps.closedOutAt ? "CLOSED" : context.dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
   const statusLines = [
-    `*Linked Jira:* ${dataOpsIssue}`,
     `*Slug:* ${escapeSlackText(context.dataOps.slug ?? "Pending")}`,
-    `*Owner:* ${owner}`,
-    `*% Captured:* ${context.dataOps.percentCaptured !== undefined ? `\`${formatPercentValue(context.dataOps.percentCaptured)}%\`` : "Pending"}`,
-    `*% Uploaded:* ${context.dataOps.percentUploaded !== undefined ? `\`${formatPercentValue(context.dataOps.percentUploaded)}%\`` : "Pending"}`,
-    `*% Validated:* ${context.dataOps.percentValidated !== undefined ? `\`${formatPercentValue(context.dataOps.percentValidated)}%\`` : "Pending"}`,
-    `*% Prep:* ${context.dataOps.percentPrep !== undefined ? `\`${formatPercentValue(context.dataOps.percentPrep)}%\`` : "Pending"}`,
-    `*% QA:* ${context.dataOps.percentQa !== undefined ? `\`${formatPercentValue(context.dataOps.percentQa)}%\`` : "Pending"}`
+    `*% Captured:* ${context.dataOps.percentCaptured !== undefined ? `\`${formatPercentValue(context.dataOps.percentCaptured)}%\`` : "Pending"} | *% Uploaded:* ${context.dataOps.percentUploaded !== undefined ? `\`${formatPercentValue(context.dataOps.percentUploaded)}%\`` : "Pending"} | *% Validated:* ${context.dataOps.percentValidated !== undefined ? `\`${formatPercentValue(context.dataOps.percentValidated)}%\`` : "Pending"} | *% Prep:* ${context.dataOps.percentPrep !== undefined ? `\`${formatPercentValue(context.dataOps.percentPrep)}%\`` : "Pending"} | *% QA:* ${context.dataOps.percentQa !== undefined ? `\`${formatPercentValue(context.dataOps.percentQa)}%\`` : "Pending"}`,
+    `*Status:* ${statusLabel}`
   ];
-
-  if (context.reportIssueKey) {
-    statusLines.push(`*Latest EOD Report:* ${buildLinkedJiraLabel(context.reportIssueKey, context.reportIssueKey)}`);
-  }
-
-  if (context.dataOps.dataQuality) {
-    statusLines.push(`*Data Quality:* ${escapeSlackText(context.dataOps.dataQuality)}`);
-  }
-
-  if (context.dataOps.forecastUrl) {
-    statusLines.push(`*Forecast URL:* ${escapeSlackText(context.dataOps.forecastUrl)}`);
-  }
-
-  if (context.dataOps.cantileverUrl) {
-    statusLines.push(`*Cantilever URL:* ${escapeSlackText(context.dataOps.cantileverUrl)}`);
-  }
-
-  if (context.dataOps.closedOutByUserId) {
-    statusLines.push(`*Closed Out By:* <@${context.dataOps.closedOutByUserId}>`);
-  }
-
-  if (context.dataOps.closedOutAt) {
-    statusLines.push(`*Closed Out At:* ${formatSlackDateTime(context.dataOps.closedOutAt)}`);
-  }
 
   return {
     text: `${context.parentTaskSummary} Data Ops Validation thread`,
@@ -1226,9 +1193,7 @@ function buildDataOpsValidationThreadMessage(context: DataOpsValidationThreadCon
           type: "mrkdwn" as const,
           text:
             `*${escapeSlackText(context.parentTaskSummary)} Data Ops Validation Thread*\n` +
-            `*Parent Inspection:* ${parentInspection}\n` +
-            `*Asset:* ${assetTask}\n` +
-            `*Component Type:* ${escapeSlackText(context.assetType)}`
+            `${assetTask} | ${escapeSlackText(context.assetType)}`
         }
       },
       {
