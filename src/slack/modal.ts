@@ -1397,6 +1397,10 @@ function formatDataOpsPercent(value?: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
 }
 
+function optionalNumberInitialValue(value?: string) {
+  return value && value.trim().length > 0 ? { initial_value: value } : {};
+}
+
 export function buildDataOpsProgressModal(
   context: DataOpsValidationThreadContext,
   state: DataOpsProgressModalStateValues = {}
@@ -1464,7 +1468,9 @@ export function buildDataOpsProgressModal(
           is_decimal_allowed: true,
           min_value: "0",
           max_value: "100",
-          initial_value: state.percentCaptured ?? formatDataOpsPercent(context.dataOps.percentCaptured),
+          ...optionalNumberInitialValue(
+            state.percentCaptured ?? formatDataOpsPercent(context.dataOps.percentCaptured)
+          ),
           placeholder: {
             type: "plain_text" as const,
             text: "0"
@@ -1484,7 +1490,9 @@ export function buildDataOpsProgressModal(
           is_decimal_allowed: true,
           min_value: "0",
           max_value: "100",
-          initial_value: state.percentUploaded ?? formatDataOpsPercent(context.dataOps.percentUploaded),
+          ...optionalNumberInitialValue(
+            state.percentUploaded ?? formatDataOpsPercent(context.dataOps.percentUploaded)
+          ),
           placeholder: {
             type: "plain_text" as const,
             text: "0"
@@ -1504,7 +1512,9 @@ export function buildDataOpsProgressModal(
           is_decimal_allowed: true,
           min_value: "0",
           max_value: "100",
-          initial_value: state.percentValidated ?? formatDataOpsPercent(context.dataOps.percentValidated),
+          ...optionalNumberInitialValue(
+            state.percentValidated ?? formatDataOpsPercent(context.dataOps.percentValidated)
+          ),
           placeholder: {
             type: "plain_text" as const,
             text: "0"
@@ -1524,7 +1534,9 @@ export function buildDataOpsProgressModal(
           is_decimal_allowed: true,
           min_value: "0",
           max_value: "100",
-          initial_value: state.percentPrep ?? formatDataOpsPercent(context.dataOps.percentPrep),
+          ...optionalNumberInitialValue(
+            state.percentPrep ?? formatDataOpsPercent(context.dataOps.percentPrep)
+          ),
           placeholder: {
             type: "plain_text" as const,
             text: "0"
@@ -1544,7 +1556,7 @@ export function buildDataOpsProgressModal(
           is_decimal_allowed: true,
           min_value: "0",
           max_value: "100",
-          initial_value: state.percentQa ?? formatDataOpsPercent(context.dataOps.percentQa),
+          ...optionalNumberInitialValue(state.percentQa ?? formatDataOpsPercent(context.dataOps.percentQa)),
           placeholder: {
             type: "plain_text" as const,
             text: "0"
