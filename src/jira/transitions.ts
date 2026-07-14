@@ -43,3 +43,21 @@ export async function transitionIssueToStatus(issueKey: string, targetStatusName
     })
   });
 }
+
+export async function transitionIssueToFirstAvailableStatus(
+  issueKey: string,
+  targetStatusNames: string[]
+): Promise<string> {
+  let lastError: Error | undefined;
+
+  for (const statusName of targetStatusNames) {
+    try {
+      await transitionIssueToStatus(issueKey, statusName);
+      return statusName;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error(`Could not transition ${issueKey} to any requested status.`);
+}

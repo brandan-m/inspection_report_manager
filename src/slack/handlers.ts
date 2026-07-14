@@ -14,7 +14,7 @@ import {
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
 import { buildDataOpsJiraCustomFields } from "../jira/dataOpsFields.js";
-import { transitionIssueToStatus } from "../jira/transitions.js";
+import { transitionIssueToFirstAvailableStatus, transitionIssueToStatus } from "../jira/transitions.js";
 import { updateIssue } from "../jira/updateIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
 import { buildParentSearchJql, getIssueDetails, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
@@ -501,8 +501,12 @@ function formatPercentValue(value: number): string {
 
 function getDataOpsStatusName(
   dataOps: Pick<DataOpsValidationState, "jiraStatusName" | "jiraIssueKey" | "closedOutAt">
-): "Triage" | "IN REVIEW" | "CLOSED" {
-  if (dataOps.jiraStatusName === "Triage" || dataOps.jiraStatusName === "IN REVIEW" || dataOps.jiraStatusName === "CLOSED") {
+): "Inspection Started" | "IN REVIEW" | "CLOSED" {
+  if (
+    dataOps.jiraStatusName === "Inspection Started" ||
+    dataOps.jiraStatusName === "IN REVIEW" ||
+    dataOps.jiraStatusName === "CLOSED"
+  ) {
     return dataOps.jiraStatusName;
   }
 
@@ -510,7 +514,7 @@ function getDataOpsStatusName(
     return "CLOSED";
   }
 
-  return dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
+  return dataOps.jiraIssueKey ? "IN REVIEW" : "Inspection Started";
 }
 
 function formatDataOpsStatusLabel(
@@ -2490,10 +2494,15 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       const context = decodeDataOpsValidationThreadContext(contextValue);
-      const nextStatusName = context.dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
+      let nextStatusName: "IN REVIEW" | "Inspection Started" = context.dataOps.jiraIssueKey
+        ? "IN REVIEW"
+        : "Inspection Started";
 
       if (context.dataOps.jiraIssueKey) {
-        await transitionIssueToStatus(context.dataOps.jiraIssueKey, nextStatusName);
+        nextStatusName = (await transitionIssueToFirstAvailableStatus(context.dataOps.jiraIssueKey, [
+          "IN REVIEW",
+          "Inspection Started"
+        ])) as "IN REVIEW" | "Inspection Started";
       }
 
       const updatedContext: DataOpsValidationThreadContext = {
@@ -2518,7 +2527,13 @@ export function registerSlackHandlers(app: App): void {
         text: `Reopened the Data Ops validation thread and moved ${issueLink} to ${nextStatusName} by <@${body.user.id}>.`
       });
     } catch (error) {
-      logger.error(error);
+      logger.error(`Could not reopen the Data Ops thread. ${formatJiraErrorMessage(error)}`, error);
+      const context = decodeDataOpsValidationThreadContext(contextValue);
+      await client.chat.postMessage({
+        channel: context.channelId,
+        thread_ts: context.threadTs,
+        text: `Could not reopen the Data Ops thread: ${formatJiraErrorMessage(error)}`
+      });
     }
   });
 
@@ -3851,13 +3866,13 @@ export function registerSlackHandlers(app: App): void {
           assetType: selectedAssetType,
           reportIssueKey: issue.key,
           dataOps: {
-            jiraStatusName: "Triage"
+            jiraStatusName: "Inspection Started"
           }
         });
 
         const rootContextWithDataOps = syncDataOpsStateToSingleThreadContext(updatedRootContext, selectedParentTaskKey, {
           threadTs: dataOpsThreadContext.threadTs,
-          jiraStatusName: "Triage"
+          jiraStatusName: "Inspection Started"
         });
 
         await updateSingleThreadEodRootMessage(client, rootContextWithDataOps);
