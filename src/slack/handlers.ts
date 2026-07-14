@@ -470,9 +470,13 @@ function getBoilerTubeCompletionPercent(
 }
 
 function hasReachedDataOperationsAlertThreshold(
-  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount"> & Partial<Pick<EodThreadContext, "workflowKey">>,
   progressValue: number
 ): boolean {
+  if (context.workflowKey === "uae_inspection_mobilization") {
+    return false;
+  }
+
   const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
 
   if (usesTubeCountForEod(context)) {
@@ -483,9 +487,13 @@ function hasReachedDataOperationsAlertThreshold(
 }
 
 function isEodScopeComplete(
-  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">,
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount"> & Partial<Pick<EodThreadContext, "workflowKey">>,
   progressValue: number
 ): boolean {
+  if (context.workflowKey === "uae_inspection_mobilization") {
+    return false;
+  }
+
   const boilerCompletionPercent = getBoilerTubeCompletionPercent(context, progressValue);
 
   if (usesTubeCountForEod(context)) {
@@ -1035,7 +1043,12 @@ function buildEodThreadStartMessage(context: EodThreadContext) {
   const assetTask = hasSeparateEodAssetTask(context)
     ? buildLinkedJiraLabel(context.parentTaskKey, getParentTaskLabel(context))
     : undefined;
-  const progressFieldLabel = usesTubeCountForEod(context) ? "Last # of Tubes Scanned" : "Last % Coverage Update";
+  const progressFieldLabel =
+    context.workflowKey === "uae_inspection_mobilization"
+      ? "Last Scanning Area Coverage (sqft.)"
+      : usesTubeCountForEod(context)
+        ? "Last # of Tubes Scanned"
+        : "Last % Coverage Update";
   const totalTubeCountLine =
     usesTubeCountForEod(context) && typeof context.totalTubeCount === "number"
       ? `*Total Tubes:* \`${String(context.totalTubeCount)}\``
@@ -1934,10 +1947,15 @@ function validateEodForm(
     errors[CALLBACKS.eodScansCompletedBlock] = `${progressFieldLabel} is required.`;
   } else if (Number.isNaN(Number(scansCompletedValue))) {
     errors[CALLBACKS.eodScansCompletedBlock] = "Enter a valid number.";
-  } else if (Number(scansCompletedValue) < 0 || (!usesTubeCount && Number(scansCompletedValue) > 100)) {
+  } else if (
+    Number(scansCompletedValue) < 0 ||
+    (!usesTubeCount && context.workflowKey !== "uae_inspection_mobilization" && Number(scansCompletedValue) > 100)
+  ) {
     errors[CALLBACKS.eodScansCompletedBlock] = usesTubeCount
       ? "Enter a number greater than or equal to 0."
-      : "Enter a number from 0 to 100.";
+      : context.workflowKey === "uae_inspection_mobilization"
+        ? "Enter a number greater than or equal to 0."
+        : "Enter a number from 0 to 100.";
   } else if (
     usesTubeCount &&
     typeof context.totalTubeCount === "number" &&

@@ -151,20 +151,27 @@ export function getEodProgressFieldLabel(
   context: Pick<EodThreadContext, "assetType"> & Partial<Pick<EodThreadContext, "workflowKey">>
 ): string {
   if (typeof context.workflowKey === "string" && usesUaeInspectionMobilizationEodFields({ workflowKey: context.workflowKey })) {
-    return "Scanning Area Coverage";
+    return "Scanning Area Coverage (sqft.)";
   }
 
   return usesTubeCountForEod(context) ? "# of Tubes Scanned" : "sqft. % done";
 }
 
 export function formatEodProgressValue(
-  context: Pick<EodThreadContext, "assetType">,
+  context: Pick<EodThreadContext, "assetType"> & Partial<Pick<EodThreadContext, "workflowKey">>,
   value: number | string
 ): string {
+  if (typeof context.workflowKey === "string" && usesUaeInspectionMobilizationEodFields({ workflowKey: context.workflowKey })) {
+    return `${String(value)} sqft.`;
+  }
+
   return usesTubeCountForEod(context) ? String(value) : `${String(value)}%`;
 }
 
-export function formatEodProgressCodeValue(context: Pick<EodThreadContext, "assetType">, value: number): string {
+export function formatEodProgressCodeValue(
+  context: Pick<EodThreadContext, "assetType"> & Partial<Pick<EodThreadContext, "workflowKey">>,
+  value: number
+): string {
   return `\`${formatEodProgressValue(context, value)}\``;
 }
 
@@ -1201,7 +1208,7 @@ export function buildEodReportModal(context: EodThreadContext) {
           action_id: CALLBACKS.eodScansCompletedAction,
           is_decimal_allowed: false,
           min_value: "0",
-          ...(usesTubeCount ? {} : { max_value: "100" }),
+          ...(usesTubeCount || usesUaeFields ? {} : { max_value: "100" }),
           placeholder: {
             type: "plain_text",
             text: "0"
