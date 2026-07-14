@@ -13,6 +13,9 @@ interface JiraSearchResponse {
 interface JiraIssueResponse {
   fields: {
     summary: string;
+    status?: {
+      name?: string;
+    };
     parent?: {
       key: string;
       fields?: {
@@ -29,6 +32,7 @@ export interface JiraIssueParentDetails {
 
 export interface JiraIssueDetails {
   summary: string;
+  statusName?: string;
   parent?: JiraIssueParentDetails;
 }
 
@@ -159,11 +163,12 @@ export async function getIssueSummary(issueKey: string): Promise<string> {
 
 export async function getIssueDetails(issueKey: string): Promise<JiraIssueDetails> {
   const result = await jiraRequest<JiraIssueResponse>(
-    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary,parent`
+    `/rest/api/3/issue/${encodeURIComponent(issueKey.trim())}?fields=summary,parent,status`
   );
 
   return {
     summary: result.fields.summary,
+    statusName: typeof result.fields.status?.name === "string" ? result.fields.status.name : undefined,
     parent: result.fields.parent
       ? {
           key: result.fields.parent.key,

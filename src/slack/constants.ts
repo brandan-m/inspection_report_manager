@@ -12,6 +12,7 @@ export const CALLBACKS = {
   singleThreadEodDataOpsAction: "single_thread_eod_data_ops_select",
   dataOpsUpdateButton: "open_data_ops_update_progress",
   dataOpsCloseoutButton: "open_data_ops_closeout",
+  dataOpsReopenButton: "reopen_data_ops_thread",
   dataOpsProgressView: "data_ops_progress_view",
   dataOpsCloseoutView: "data_ops_closeout_view",
   channelBlock: "channel_block",

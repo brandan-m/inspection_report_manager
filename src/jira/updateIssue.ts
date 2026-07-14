@@ -6,6 +6,7 @@ export interface UpdateIssueInput {
   summary?: string;
   details?: string;
   descriptionContent?: JiraDocNode[];
+  customFields?: Record<string, unknown>;
 }
 
 export async function updateIssue(input: UpdateIssueInput): Promise<void> {
@@ -38,6 +39,8 @@ export async function updateIssue(input: UpdateIssueInput): Promise<void> {
       content: descriptionContent
     };
   }
+
+  Object.assign(fields, input.customFields ?? {});
 
   if (Object.keys(fields).length === 0) {
     return;

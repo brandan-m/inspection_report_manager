@@ -782,6 +782,7 @@ export function encodeSingleThreadEodContext(context: SingleThreadEodContext): s
         ? {
             ts: asset.dataOps.threadTs,
             jk: asset.dataOps.jiraIssueKey,
+            js: asset.dataOps.jiraStatusName,
             sl: asset.dataOps.slug,
             pc: asset.dataOps.percentCaptured,
             pu: asset.dataOps.percentUploaded,
@@ -808,6 +809,7 @@ function decodeDataOpsValidationState(value: unknown): DataOpsValidationState | 
   const dataOps = value as {
     ts?: unknown;
     jk?: unknown;
+    js?: unknown;
     sl?: unknown;
     pc?: unknown;
     pu?: unknown;
@@ -834,6 +836,7 @@ function decodeDataOpsValidationState(value: unknown): DataOpsValidationState | 
   return {
     threadTs: dataOps.ts,
     jiraIssueKey: stringOrUndefined(dataOps.jk),
+    jiraStatusName: stringOrUndefined(dataOps.js),
     slug: stringOrUndefined(dataOps.sl),
     percentCaptured: numberOrUndefined(dataOps.pc),
     percentUploaded: numberOrUndefined(dataOps.pu),
@@ -1014,6 +1017,10 @@ export function decodeDataOpsValidationThreadContext(value: string): DataOpsVali
       jiraIssueKey:
         typeof parsed.dataOps?.jiraIssueKey === "string" && parsed.dataOps.jiraIssueKey.trim().length > 0
           ? parsed.dataOps.jiraIssueKey
+          : undefined,
+      jiraStatusName:
+        typeof parsed.dataOps?.jiraStatusName === "string" && parsed.dataOps.jiraStatusName.trim().length > 0
+          ? parsed.dataOps.jiraStatusName
           : undefined,
       slug: typeof parsed.dataOps?.slug === "string" && parsed.dataOps.slug.trim().length > 0 ? parsed.dataOps.slug : undefined,
       percentCaptured:
@@ -1637,12 +1644,7 @@ export function formatDataOpsIssueDetails(
     `Asset: ${context.parentTaskSummary}`,
     `Component Type: ${context.assetType}`,
     `Slug: ${values.slug}`,
-    `Owner: ${values.ownerSlackUserId}`,
-    `% Captured: ${values.percentCaptured}%`,
-    `% Uploaded: ${values.percentUploaded}%`,
-    `% Validated: ${values.percentValidated}%`,
-    `% Prep: ${values.percentPrep}%`,
-    `% QA: ${values.percentQa}%`
+    `Owner: ${values.ownerSlackUserId}`
   ];
 
   if (context.reportIssueKey) {
@@ -1680,12 +1682,7 @@ export function buildDataOpsDescriptionContent(
         jiraText("Owner: ", [{ type: "strong" }]),
         ...(ownerContent?.length ? ownerContent : [jiraText(values.ownerSlackUserId)])
       ]
-    },
-    jiraParagraph("% Captured", `${formatDataOpsPercent(values.percentCaptured)}%`),
-    jiraParagraph("% Uploaded", `${formatDataOpsPercent(values.percentUploaded)}%`),
-    jiraParagraph("% Validated", `${formatDataOpsPercent(values.percentValidated)}%`),
-    jiraParagraph("% Prep", `${formatDataOpsPercent(values.percentPrep)}%`),
-    jiraParagraph("% QA", `${formatDataOpsPercent(values.percentQa)}%`)
+    }
   ];
 
   if (context.reportIssueKey) {

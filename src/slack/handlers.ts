@@ -13,6 +13,8 @@ import {
 } from "../ehs/form.js";
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
+import { buildDataOpsJiraCustomFields } from "../jira/dataOpsFields.js";
+import { transitionIssueToStatus } from "../jira/transitions.js";
 import { updateIssue } from "../jira/updateIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
 import { buildParentSearchJql, getIssueDetails, getIssueSummary, searchChildTasks, searchParentIssues } from "../jira/searchEpics.js";
@@ -495,6 +497,36 @@ function isEodScopeComplete(
 
 function formatPercentValue(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function getDataOpsStatusName(
+  dataOps: Pick<DataOpsValidationState, "jiraStatusName" | "jiraIssueKey" | "closedOutAt">
+): "Triage" | "IN REVIEW" | "CLOSED" {
+  if (dataOps.jiraStatusName === "Triage" || dataOps.jiraStatusName === "IN REVIEW" || dataOps.jiraStatusName === "CLOSED") {
+    return dataOps.jiraStatusName;
+  }
+
+  if (dataOps.closedOutAt) {
+    return "CLOSED";
+  }
+
+  return dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
+}
+
+function formatDataOpsStatusLabel(
+  dataOps: Pick<DataOpsValidationState, "jiraStatusName" | "jiraIssueKey" | "closedOutAt">
+): string {
+  const statusName = getDataOpsStatusName(dataOps);
+
+  if (statusName === "CLOSED") {
+    return `:green_circle: ${statusName}`;
+  }
+
+  if (statusName === "IN REVIEW") {
+    return `:yellow_circle: ${statusName}`;
+  }
+
+  return `:red_circle: ${statusName}`;
 }
 
 function parsePercentInput(value?: string): number | undefined {
@@ -1177,7 +1209,7 @@ async function updateSingleThreadEodRootMessage(client: App["client"], context: 
 
 function buildDataOpsValidationThreadMessage(context: DataOpsValidationThreadContext) {
   const assetTask = buildLinkedJiraLabel(context.parentTaskKey, context.parentTaskSummary);
-  const statusLabel = context.dataOps.closedOutAt ? "CLOSED" : context.dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
+  const statusLabel = formatDataOpsStatusLabel(context.dataOps);
   const statusLines = [
     `*Slug:* ${escapeSlackText(context.dataOps.slug ?? "Pending")}`,
     `*% Captured:* ${context.dataOps.percentCaptured !== undefined ? `\`${formatPercentValue(context.dataOps.percentCaptured)}%\`` : "Pending"} | *% Uploaded:* ${context.dataOps.percentUploaded !== undefined ? `\`${formatPercentValue(context.dataOps.percentUploaded)}%\`` : "Pending"} | *% Validated:* ${context.dataOps.percentValidated !== undefined ? `\`${formatPercentValue(context.dataOps.percentValidated)}%\`` : "Pending"} | *% Prep:* ${context.dataOps.percentPrep !== undefined ? `\`${formatPercentValue(context.dataOps.percentPrep)}%\`` : "Pending"} | *% QA:* ${context.dataOps.percentQa !== undefined ? `\`${formatPercentValue(context.dataOps.percentQa)}%\`` : "Pending"}`,
@@ -1224,7 +1256,20 @@ function buildDataOpsValidationThreadMessage(context: DataOpsValidationThreadCon
             },
             style: "primary",
             value: encodeDataOpsValidationThreadContext(context)
-          }
+          },
+          ...(context.dataOps.closedOutAt
+            ? [
+                {
+                  type: "button" as const,
+                  action_id: CALLBACKS.dataOpsReopenButton,
+                  text: {
+                    type: "plain_text" as const,
+                    text: "Reopen Thread"
+                  },
+                  value: encodeDataOpsValidationThreadContext(context)
+                }
+              ]
+            : [])
         ]
       }
     ]
@@ -2425,6 +2470,56 @@ export function registerSlackHandlers(app: App): void {
     });
 
     logger.info(`Opened Data Ops closeout modal for thread ${context.threadTs}`);
+  });
+
+  app.action(CALLBACKS.dataOpsReopenButton, async ({ ack, body, client, logger }) => {
+    await ack();
+
+    if (!("actions" in body) || !Array.isArray(body.actions) || body.actions.length === 0) {
+      logger.error("Data Ops reopen action did not include any actions.");
+      return;
+    }
+
+    const action = body.actions[0];
+    const contextValue = action && "value" in action ? action.value : undefined;
+
+    if (!contextValue) {
+      logger.error("Data Ops reopen action did not include thread context.");
+      return;
+    }
+
+    try {
+      const context = decodeDataOpsValidationThreadContext(contextValue);
+      const nextStatusName = context.dataOps.jiraIssueKey ? "IN REVIEW" : "Triage";
+
+      if (context.dataOps.jiraIssueKey) {
+        await transitionIssueToStatus(context.dataOps.jiraIssueKey, nextStatusName);
+      }
+
+      const updatedContext: DataOpsValidationThreadContext = {
+        ...context,
+        dataOps: {
+          ...context.dataOps,
+          jiraStatusName: nextStatusName,
+          closedOutByUserId: undefined,
+          closedOutAt: undefined
+        }
+      };
+
+      await updateDataOpsValidationThreadRootMessage(client, updatedContext);
+
+      const issueLink = updatedContext.dataOps.jiraIssueKey
+        ? buildLinkedJiraLabel(updatedContext.dataOps.jiraIssueKey, updatedContext.dataOps.jiraIssueKey)
+        : "the Data Ops ticket";
+
+      await client.chat.postMessage({
+        channel: updatedContext.channelId,
+        thread_ts: updatedContext.threadTs,
+        text: `Reopened the Data Ops validation thread and moved ${issueLink} to ${nextStatusName}.`
+      });
+    } catch (error) {
+      logger.error(error);
+    }
   });
 
   app.action(CALLBACKS.eodScansCompletedAction, async ({ ack, body, logger }) => {
@@ -3755,21 +3850,17 @@ export function registerSlackHandlers(app: App): void {
           parentTaskSummary,
           assetType: selectedAssetType,
           reportIssueKey: issue.key,
-          dataOps: {}
+          dataOps: {
+            jiraStatusName: "Triage"
+          }
         });
 
         const rootContextWithDataOps = syncDataOpsStateToSingleThreadContext(updatedRootContext, selectedParentTaskKey, {
-          threadTs: dataOpsThreadContext.threadTs
+          threadTs: dataOpsThreadContext.threadTs,
+          jiraStatusName: "Triage"
         });
 
         await updateSingleThreadEodRootMessage(client, rootContextWithDataOps);
-        await client.chat.postMessage({
-          channel: context.channelId,
-          thread_ts: context.threadTs,
-          text:
-            `Started a Data Ops validation thread for ${parentTaskSummary}. ` +
-            "Open the new channel thread to track validation progress."
-        });
       }
 
       const completionMessage = buildEodCompletionMessage({
@@ -3915,10 +4006,18 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
+      const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+        percentCaptured: validation.values.percentCaptured,
+        percentUploaded: validation.values.percentUploaded,
+        percentValidated: validation.values.percentValidated,
+        percentPrep: validation.values.percentPrep,
+        percentQa: validation.values.percentQa
+      });
       const updatedContext: DataOpsValidationThreadContext = {
         ...context,
         dataOps: {
           ...context.dataOps,
+          jiraStatusName: context.dataOps.closedOutAt ? context.dataOps.jiraStatusName : "IN REVIEW",
           slug: validation.values.slug,
           ownerSlackUserId: validation.values.ownerSlackUserId,
           percentCaptured: validation.values.percentCaptured,
@@ -3941,10 +4040,14 @@ export function registerSlackHandlers(app: App): void {
           details,
           descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent),
           requesterContent: [await createSlackToJiraMentionResolver(client, logger)(body.user.id)],
-          requesterName: body.user.id
+          requesterName: body.user.id,
+          customFields
         });
 
         updatedContext.dataOps.jiraIssueKey = issue.key;
+        updatedContext.dataOps.jiraStatusName = "IN REVIEW";
+
+        await transitionIssueToStatus(issue.key, "IN REVIEW");
 
         try {
           await linkIssuesByRelationship({
@@ -3972,16 +4075,19 @@ export function registerSlackHandlers(app: App): void {
           issueKey: updatedContext.dataOps.jiraIssueKey,
           summary,
           details,
-          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent)
+          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent),
+          customFields
         });
       }
 
       await updateDataOpsValidationThreadRootMessage(client, updatedContext);
+      const issueLink = updatedContext.dataOps.jiraIssueKey
+        ? buildLinkedJiraLabel(updatedContext.dataOps.jiraIssueKey, updatedContext.dataOps.jiraIssueKey)
+        : "the Data Ops ticket";
       await client.chat.postMessage({
         channel: updatedContext.channelId,
         thread_ts: updatedContext.threadTs,
-        text:
-          `${updatedContext.dataOps.jiraIssueKey ? `Saved progress to ${updatedContext.dataOps.jiraIssueKey}.` : "Saved progress."}`
+        text: `Saved progress to ${issueLink}.`
       });
     } catch (error) {
       logger.error(error);
@@ -4022,6 +4128,7 @@ export function registerSlackHandlers(app: App): void {
     await ack();
 
     try {
+      const workflow = getWorkflowByKey(context.workflowKey);
       const closedOutAt = new Date().toISOString();
       const updatedContext = applyDataOpsCloseoutToContext(
         context,
@@ -4029,9 +4136,20 @@ export function registerSlackHandlers(app: App): void {
         body.user.id,
         closedOutAt
       );
+      updatedContext.dataOps.jiraStatusName = "CLOSED";
 
       if (updatedContext.dataOps.jiraIssueKey) {
         const progressValues = getStoredDataOpsProgressValues(updatedContext);
+        const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+          percentCaptured: updatedContext.dataOps.percentCaptured,
+          percentUploaded: updatedContext.dataOps.percentUploaded,
+          percentValidated: updatedContext.dataOps.percentValidated,
+          percentPrep: updatedContext.dataOps.percentPrep,
+          percentQa: updatedContext.dataOps.percentQa,
+          dataQuality: updatedContext.dataOps.dataQuality,
+          forecastUrl: updatedContext.dataOps.forecastUrl,
+          cantileverUrl: updatedContext.dataOps.cantileverUrl
+        });
 
         if (progressValues) {
           const ownerContent = updatedContext.dataOps.ownerSlackUserId
@@ -4041,19 +4159,27 @@ export function registerSlackHandlers(app: App): void {
             issueKey: updatedContext.dataOps.jiraIssueKey,
             summary: buildDataOpsIssueSummary(updatedContext),
             details: formatDataOpsIssueDetails(updatedContext, progressValues),
-            descriptionContent: buildDataOpsDescriptionContent(updatedContext, progressValues, ownerContent)
+            descriptionContent: buildDataOpsDescriptionContent(updatedContext, progressValues, ownerContent),
+            customFields
+          });
+        } else {
+          await updateIssue({
+            issueKey: updatedContext.dataOps.jiraIssueKey,
+            customFields
           });
         }
+
+        await transitionIssueToStatus(updatedContext.dataOps.jiraIssueKey, "CLOSED");
       }
 
       await updateDataOpsValidationThreadRootMessage(client, updatedContext);
+      const issueLink = updatedContext.dataOps.jiraIssueKey
+        ? buildLinkedJiraLabel(updatedContext.dataOps.jiraIssueKey, updatedContext.dataOps.jiraIssueKey)
+        : "the Data Ops ticket";
       await client.chat.postMessage({
         channel: updatedContext.channelId,
         thread_ts: updatedContext.threadTs,
-        text:
-          updatedContext.dataOps.jiraIssueKey
-            ? `Closed out the Data Ops validation thread and updated ${updatedContext.dataOps.jiraIssueKey}.`
-            : "Closed out the Data Ops validation thread."
+        text: `Closed out the Data Ops validation thread and updated ${issueLink}.`
       });
     } catch (error) {
       logger.error(error);
