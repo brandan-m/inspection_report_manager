@@ -137,7 +137,23 @@ export function usesTubeCountForEod(context: Pick<EodThreadContext, "assetType">
   return context.assetType === "Boiler";
 }
 
-export function getEodProgressFieldLabel(context: Pick<EodThreadContext, "assetType">): string {
+function usesUaeInspectionMobilizationEodFields(
+  context: Pick<EodThreadContext, "workflowKey"> | Pick<WorkflowDefinition, "key">
+): boolean {
+  if ("key" in context) {
+    return context.key === "uae_inspection_mobilization";
+  }
+
+  return context.workflowKey === "uae_inspection_mobilization";
+}
+
+export function getEodProgressFieldLabel(
+  context: Pick<EodThreadContext, "assetType"> & Partial<Pick<EodThreadContext, "workflowKey">>
+): string {
+  if (typeof context.workflowKey === "string" && usesUaeInspectionMobilizationEodFields({ workflowKey: context.workflowKey })) {
+    return "Scanning Area Coverage";
+  }
+
   return usesTubeCountForEod(context) ? "# of Tubes Scanned" : "sqft. % done";
 }
 
@@ -1076,6 +1092,7 @@ export function buildEodReportModal(context: EodThreadContext) {
   const parentTaskLabel = getEodAssetDisplayLabel(context);
   const progressFieldLabel = getEodProgressFieldLabel(context);
   const usesTubeCount = usesTubeCountForEod(context);
+  const usesUaeFields = usesUaeInspectionMobilizationEodFields(context);
   const summaryLines = [`*Parent Inspection:* ${parentInspectionLabel}`];
 
   if (hasSeparateEodAssetTask(context) && parentTaskLabel) {
@@ -1124,6 +1141,34 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: "Date"
         }
       },
+      ...(usesUaeFields
+        ? [
+            plainTextInputBlock(
+              CALLBACKS.summaryBlock,
+              CALLBACKS.summaryAction,
+              "Asset Number",
+              "Enter asset number"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodCrewOnSiteBlock,
+              CALLBACKS.eodCrewOnSiteAction,
+              "Crew onsite time",
+              "Enter crew onsite time"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodPermitApprovedBlock,
+              CALLBACKS.eodPermitApprovedAction,
+              "Permit Approval time",
+              "Enter permit approval time"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodCalibrationCompletedBlock,
+              CALLBACKS.eodCalibrationCompletedAction,
+              "Calibration completed",
+              "Enter calibration completed time or status"
+            )
+          ]
+        : []),
       richTextInputBlock(
         CALLBACKS.eodFullDayOverviewBlock,
         CALLBACKS.eodFullDayOverviewAction,
@@ -1167,6 +1212,52 @@ export function buildEodReportModal(context: EodThreadContext) {
           text: progressFieldLabel
         }
       },
+      ...(usesUaeFields
+        ? [
+            {
+              type: "input" as const,
+              block_id: CALLBACKS.eodCoverageBlock,
+              element: {
+                type: "number_input" as const,
+                action_id: CALLBACKS.eodCoverageAction,
+                is_decimal_allowed: false,
+                min_value: "0",
+                placeholder: {
+                  type: "plain_text" as const,
+                  text: "0"
+                }
+              },
+              label: {
+                type: "plain_text" as const,
+                text: "Number of Scans completed"
+              }
+            },
+            plainTextInputBlock(
+              CALLBACKS.eodUploadStatusBlock,
+              CALLBACKS.eodUploadStatusAction,
+              "Data Upload Status",
+              "Enter data upload status"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodValidationStatusBlock,
+              CALLBACKS.eodValidationStatusAction,
+              "Data Validation Status",
+              "Enter data validation status"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodReportStatusBlock,
+              CALLBACKS.eodReportStatusAction,
+              "Report Status",
+              "Enter report status"
+            ),
+            plainTextInputBlock(
+              CALLBACKS.eodCrewOffSiteBlock,
+              CALLBACKS.eodCrewOffSiteAction,
+              "Crew off-site time",
+              "Enter crew off-site time"
+            )
+          ]
+        : []),
       {
         type: "input",
         block_id: CALLBACKS.eodScanningTimeBlock,
@@ -1733,6 +1824,7 @@ export function applyDataOpsCloseoutToContext(
 
 export function formatEodReportDetails(context: EodThreadContext, values: EodReportFormValues): string {
   const progressFieldLabel = getEodProgressFieldLabel(context);
+  const usesUaeFields = usesUaeInspectionMobilizationEodFields(context);
   const lines = [`Parent Inspection: ${context.parentEpicLabel ?? context.parentEpicKey}`];
 
   if (hasSeparateEodAssetTask(context)) {
@@ -1745,9 +1837,26 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
       ? [`Total Tubes: ${context.totalTubeCount}`]
       : []),
     `Date: ${values.date}`,
+    ...(usesUaeFields
+      ? [
+          `Asset Number: ${values.assetNumber ?? ""}`,
+          `Crew onsite time: ${values.crewOnsiteTime ?? ""}`,
+          `Permit Approval time: ${values.permitApprovalTime ?? ""}`,
+          `Calibration completed: ${values.calibrationCompleted ?? ""}`,
+          `Number of Scans completed: ${values.scanCount !== undefined ? String(values.scanCount) : ""}`
+        ]
+      : []),
     `Full Day Overview:\n${values.fullDayOverview}`,
     `JSA Submitted: ${values.jsaSubmitted}`,
     `${progressFieldLabel}: ${formatEodProgressValue(context, values.numberOfScansCompleted)}`,
+    ...(usesUaeFields
+      ? [
+          `Data Upload Status: ${values.dataUploadStatus ?? ""}`,
+          `Data Validation Status: ${values.dataValidationStatus ?? ""}`,
+          `Report Status: ${values.reportStatus ?? ""}`,
+          `Crew off-site time: ${values.crewOffSiteTime ?? ""}`
+        ]
+      : []),
     `Total Scanning Time (Hours): ${values.totalScanningTimeHours}`
   );
 
@@ -1760,6 +1869,7 @@ export function formatEodReportDetails(context: EodThreadContext, values: EodRep
 
 export function buildEodDescriptionContent(context: EodThreadContext, values: EodReportFormValues): JiraDocNode[] {
   const progressFieldLabel = getEodProgressFieldLabel(context);
+  const usesUaeFields = usesUaeInspectionMobilizationEodFields(context);
   const content: JiraDocNode[] = [jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey)];
 
   if (hasSeparateEodAssetTask(context)) {
@@ -1772,6 +1882,18 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
       ? [jiraParagraph("Total Tubes", String(context.totalTubeCount))]
       : []),
     jiraParagraph("Date", values.date),
+    ...(usesUaeFields
+      ? [
+          jiraParagraph("Asset Number", values.assetNumber ?? ""),
+          jiraParagraph("Crew onsite time", values.crewOnsiteTime ?? ""),
+          jiraParagraph("Permit Approval time", values.permitApprovalTime ?? ""),
+          jiraParagraph("Calibration completed", values.calibrationCompleted ?? ""),
+          jiraParagraph(
+            "Number of Scans completed",
+            values.scanCount !== undefined ? String(values.scanCount) : ""
+          )
+        ]
+      : []),
     {
       type: "heading",
       attrs: {
@@ -1789,6 +1911,14 @@ export function buildEodDescriptionContent(context: EodThreadContext, values: Eo
         ]),
     jiraParagraph("JSA Submitted", values.jsaSubmitted),
     jiraParagraph(progressFieldLabel, formatEodProgressValue(context, values.numberOfScansCompleted)),
+    ...(usesUaeFields
+      ? [
+          jiraParagraph("Data Upload Status", values.dataUploadStatus ?? ""),
+          jiraParagraph("Data Validation Status", values.dataValidationStatus ?? ""),
+          jiraParagraph("Report Status", values.reportStatus ?? ""),
+          jiraParagraph("Crew off-site time", values.crewOffSiteTime ?? "")
+        ]
+      : []),
     jiraParagraph("Total Scanning Time (Hours)", String(values.totalScanningTimeHours))
   );
 

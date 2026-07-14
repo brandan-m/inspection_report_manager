@@ -1339,6 +1339,7 @@ function buildEodCompletionMessage(input: {
   context: EodThreadContext;
   values: EodReportFormValues;
 }) {
+  const usesUaeFields = input.context.workflowKey === "uae_inspection_mobilization";
   const issueLink = buildLinkedJiraLabel(input.issueKey, input.issueKey);
   const parentInspection = buildLinkedJiraLabel(
     input.context.parentEpicKey,
@@ -1355,8 +1356,25 @@ function buildEodCompletionMessage(input: {
       : []),
     `*Submitted by:* <@${input.requesterId}>`,
     `*Date:* ${escapeSlackText(input.values.date)}`,
+    ...(usesUaeFields
+      ? [
+          `*Asset Number:* ${escapeSlackText(input.values.assetNumber ?? "")}`,
+          `*Crew onsite time:* ${escapeSlackText(input.values.crewOnsiteTime ?? "")}`,
+          `*Permit Approval time:* ${escapeSlackText(input.values.permitApprovalTime ?? "")}`,
+          `*Calibration completed:* ${escapeSlackText(input.values.calibrationCompleted ?? "")}`,
+          `*Number of Scans completed:* ${String(input.values.scanCount ?? "")}`
+        ]
+      : []),
     `*JSA Submitted:* ${escapeSlackText(input.values.jsaSubmitted)}`,
     `*${progressFieldLabel}:* ${formatEodProgressCodeValue(input.context, input.values.numberOfScansCompleted)}`,
+    ...(usesUaeFields
+      ? [
+          `*Data Upload Status:* ${escapeSlackText(input.values.dataUploadStatus ?? "")}`,
+          `*Data Validation Status:* ${escapeSlackText(input.values.dataValidationStatus ?? "")}`,
+          `*Report Status:* ${escapeSlackText(input.values.reportStatus ?? "")}`,
+          `*Crew off-site time:* ${escapeSlackText(input.values.crewOffSiteTime ?? "")}`
+        ]
+      : []),
     `*Total Scanning Time (Hours):* ${String(input.values.totalScanningTimeHours)}`
   ];
 
@@ -1833,10 +1851,23 @@ function summarizeCreateIssueSubmission(input: {
 
 function validateEodForm(
   values: ModalState | undefined,
-  context: Pick<EodThreadContext, "assetType" | "totalTubeCount">
+  context: Pick<EodThreadContext, "assetType" | "totalTubeCount"> & Partial<Pick<EodThreadContext, "workflowKey">>
 ) {
   const errors: Record<string, string> = {};
+  const usesUaeFields = context.workflowKey === "uae_inspection_mobilization";
   const date = getDateValue(values, CALLBACKS.eodDateBlock, CALLBACKS.eodDateAction);
+  const assetNumber = getPlainTextValue(values, CALLBACKS.summaryBlock, CALLBACKS.summaryAction);
+  const crewOnsiteTime = getPlainTextValue(values, CALLBACKS.eodCrewOnSiteBlock, CALLBACKS.eodCrewOnSiteAction);
+  const permitApprovalTime = getPlainTextValue(
+    values,
+    CALLBACKS.eodPermitApprovedBlock,
+    CALLBACKS.eodPermitApprovedAction
+  );
+  const calibrationCompleted = getPlainTextValue(
+    values,
+    CALLBACKS.eodCalibrationCompletedBlock,
+    CALLBACKS.eodCalibrationCompletedAction
+  );
   const fullDayOverviewValue = getRichTextValue(
     values,
     CALLBACKS.eodFullDayOverviewBlock,
@@ -1852,6 +1883,15 @@ function validateEodForm(
     CALLBACKS.eodScansCompletedBlock,
     CALLBACKS.eodScansCompletedAction
   );
+  const scanCountValue = getPlainTextValue(values, CALLBACKS.eodCoverageBlock, CALLBACKS.eodCoverageAction);
+  const dataUploadStatus = getPlainTextValue(values, CALLBACKS.eodUploadStatusBlock, CALLBACKS.eodUploadStatusAction);
+  const dataValidationStatus = getPlainTextValue(
+    values,
+    CALLBACKS.eodValidationStatusBlock,
+    CALLBACKS.eodValidationStatusAction
+  );
+  const reportStatus = getPlainTextValue(values, CALLBACKS.eodReportStatusBlock, CALLBACKS.eodReportStatusAction);
+  const crewOffSiteTime = getPlainTextValue(values, CALLBACKS.eodCrewOffSiteBlock, CALLBACKS.eodCrewOffSiteAction);
   const scanningTimeValue = getPlainTextValue(
     values,
     CALLBACKS.eodScanningTimeBlock,
@@ -1861,6 +1901,22 @@ function validateEodForm(
 
   if (!date) {
     errors[CALLBACKS.eodDateBlock] = "Date is required.";
+  }
+
+  if (usesUaeFields && !assetNumber?.trim()) {
+    errors[CALLBACKS.summaryBlock] = "Asset Number is required.";
+  }
+
+  if (usesUaeFields && !crewOnsiteTime?.trim()) {
+    errors[CALLBACKS.eodCrewOnSiteBlock] = "Crew onsite time is required.";
+  }
+
+  if (usesUaeFields && !permitApprovalTime?.trim()) {
+    errors[CALLBACKS.eodPermitApprovedBlock] = "Permit Approval time is required.";
+  }
+
+  if (usesUaeFields && !calibrationCompleted?.trim()) {
+    errors[CALLBACKS.eodCalibrationCompletedBlock] = "Calibration completed is required.";
   }
 
   if (!fullDayOverview.trim()) {
@@ -1892,6 +1948,30 @@ function validateEodForm(
     )}.`;
   }
 
+  if (usesUaeFields && !scanCountValue) {
+    errors[CALLBACKS.eodCoverageBlock] = "Number of Scans completed is required.";
+  } else if (usesUaeFields && Number.isNaN(Number(scanCountValue))) {
+    errors[CALLBACKS.eodCoverageBlock] = "Enter a valid number.";
+  } else if (usesUaeFields && Number(scanCountValue) < 0) {
+    errors[CALLBACKS.eodCoverageBlock] = "Enter a number greater than or equal to 0.";
+  }
+
+  if (usesUaeFields && !dataUploadStatus?.trim()) {
+    errors[CALLBACKS.eodUploadStatusBlock] = "Data Upload Status is required.";
+  }
+
+  if (usesUaeFields && !dataValidationStatus?.trim()) {
+    errors[CALLBACKS.eodValidationStatusBlock] = "Data Validation Status is required.";
+  }
+
+  if (usesUaeFields && !reportStatus?.trim()) {
+    errors[CALLBACKS.eodReportStatusBlock] = "Report Status is required.";
+  }
+
+  if (usesUaeFields && !crewOffSiteTime?.trim()) {
+    errors[CALLBACKS.eodCrewOffSiteBlock] = "Crew off-site time is required.";
+  }
+
   if (!scanningTimeValue) {
     errors[CALLBACKS.eodScanningTimeBlock] = "Total Scanning Time is required.";
   } else if (Number.isNaN(Number(scanningTimeValue))) {
@@ -1914,7 +1994,16 @@ function validateEodForm(
       fullDayOverview,
       fullDayOverviewContent,
       jsaSubmitted: jsaSubmitted as EodYesNo,
+      assetNumber: assetNumber?.trim() || undefined,
+      crewOnsiteTime: crewOnsiteTime?.trim() || undefined,
+      permitApprovalTime: permitApprovalTime?.trim() || undefined,
+      calibrationCompleted: calibrationCompleted?.trim() || undefined,
+      scanCount: usesUaeFields && scanCountValue ? Number(scanCountValue) : undefined,
       numberOfScansCompleted: Number(scansCompletedValue),
+      dataUploadStatus: dataUploadStatus?.trim() || undefined,
+      dataValidationStatus: dataValidationStatus?.trim() || undefined,
+      reportStatus: reportStatus?.trim() || undefined,
+      crewOffSiteTime: crewOffSiteTime?.trim() || undefined,
       totalScanningTimeHours: Number(scanningTimeValue),
       notes: notes?.trim() || undefined
     } satisfies EodReportFormValues

@@ -147,7 +147,16 @@ export interface EodReportFormValues {
   fullDayOverview: string;
   fullDayOverviewContent?: JiraDocNode[];
   jsaSubmitted: EodYesNo;
+  assetNumber?: string;
+  crewOnsiteTime?: string;
+  permitApprovalTime?: string;
+  calibrationCompleted?: string;
+  scanCount?: number;
   numberOfScansCompleted: number;
+  dataUploadStatus?: string;
+  dataValidationStatus?: string;
+  reportStatus?: string;
+  crewOffSiteTime?: string;
   totalScanningTimeHours: number;
   notes?: string;
 }
