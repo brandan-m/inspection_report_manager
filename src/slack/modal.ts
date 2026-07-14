@@ -1669,7 +1669,8 @@ export function formatDataOpsIssueDetails(
 export function buildDataOpsDescriptionContent(
   context: DataOpsValidationThreadContext,
   values: DataOpsProgressFormValues,
-  ownerContent?: JiraInlineNode[]
+  ownerContent?: JiraInlineNode[],
+  updatedByContent?: JiraInlineNode[]
 ): JiraDocNode[] {
   const content: JiraDocNode[] = [
     jiraParagraph("Parent Inspection", context.parentEpicLabel ?? context.parentEpicKey),
@@ -1681,6 +1682,13 @@ export function buildDataOpsDescriptionContent(
       content: [
         jiraText("Owner: ", [{ type: "strong" }]),
         ...(ownerContent?.length ? ownerContent : [jiraText(values.ownerSlackUserId)])
+      ]
+    },
+    {
+      type: "paragraph",
+      content: [
+        jiraText("Last Updated from Slack by: ", [{ type: "strong" }]),
+        ...(updatedByContent?.length ? updatedByContent : [jiraText("Unknown")])
       ]
     }
   ];

@@ -519,11 +519,11 @@ function formatDataOpsStatusLabel(
   const statusName = getDataOpsStatusName(dataOps);
 
   if (statusName === "CLOSED") {
-    return `:green_circle: ${statusName}`;
+    return `:white_check_mark: ${statusName}`;
   }
 
   if (statusName === "IN REVIEW") {
-    return `:yellow_circle: ${statusName}`;
+    return `:large_yellow_square: ${statusName}`;
   }
 
   return `:red_circle: ${statusName}`;
@@ -2515,7 +2515,7 @@ export function registerSlackHandlers(app: App): void {
       await client.chat.postMessage({
         channel: updatedContext.channelId,
         thread_ts: updatedContext.threadTs,
-        text: `Reopened the Data Ops validation thread and moved ${issueLink} to ${nextStatusName}.`
+        text: `Reopened the Data Ops validation thread and moved ${issueLink} to ${nextStatusName} by <@${body.user.id}>.`
       });
     } catch (error) {
       logger.error(error);
@@ -4028,6 +4028,7 @@ export function registerSlackHandlers(app: App): void {
         }
       };
       const ownerContent = [await createSlackToJiraMentionResolver(client, logger)(validation.values.ownerSlackUserId)];
+      const updatedByContent = [await createSlackToJiraMentionResolver(client, logger)(body.user.id)];
       const summary = buildDataOpsIssueSummary(updatedContext);
       const details = formatDataOpsIssueDetails(updatedContext, validation.values);
 
@@ -4038,7 +4039,12 @@ export function registerSlackHandlers(app: App): void {
           parentEpicKey: updatedContext.parentEpicKey,
           summary,
           details,
-          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent),
+          descriptionContent: buildDataOpsDescriptionContent(
+            updatedContext,
+            validation.values,
+            ownerContent,
+            updatedByContent
+          ),
           requesterContent: [await createSlackToJiraMentionResolver(client, logger)(body.user.id)],
           requesterName: body.user.id,
           customFields
@@ -4075,7 +4081,12 @@ export function registerSlackHandlers(app: App): void {
           issueKey: updatedContext.dataOps.jiraIssueKey,
           summary,
           details,
-          descriptionContent: buildDataOpsDescriptionContent(updatedContext, validation.values, ownerContent),
+          descriptionContent: buildDataOpsDescriptionContent(
+            updatedContext,
+            validation.values,
+            ownerContent,
+            updatedByContent
+          ),
           customFields
         });
       }
@@ -4087,7 +4098,7 @@ export function registerSlackHandlers(app: App): void {
       await client.chat.postMessage({
         channel: updatedContext.channelId,
         thread_ts: updatedContext.threadTs,
-        text: `Saved progress to ${issueLink}.`
+        text: `Saved progress to ${issueLink} by <@${body.user.id}>.`
       });
     } catch (error) {
       logger.error(error);
@@ -4155,11 +4166,17 @@ export function registerSlackHandlers(app: App): void {
           const ownerContent = updatedContext.dataOps.ownerSlackUserId
             ? [await createSlackToJiraMentionResolver(client, logger)(updatedContext.dataOps.ownerSlackUserId)]
             : undefined;
+          const updatedByContent = [await createSlackToJiraMentionResolver(client, logger)(body.user.id)];
           await updateIssue({
             issueKey: updatedContext.dataOps.jiraIssueKey,
             summary: buildDataOpsIssueSummary(updatedContext),
             details: formatDataOpsIssueDetails(updatedContext, progressValues),
-            descriptionContent: buildDataOpsDescriptionContent(updatedContext, progressValues, ownerContent),
+            descriptionContent: buildDataOpsDescriptionContent(
+              updatedContext,
+              progressValues,
+              ownerContent,
+              updatedByContent
+            ),
             customFields
           });
         } else {
@@ -4179,7 +4196,7 @@ export function registerSlackHandlers(app: App): void {
       await client.chat.postMessage({
         channel: updatedContext.channelId,
         thread_ts: updatedContext.threadTs,
-        text: `Closed out the Data Ops validation thread and updated ${issueLink}.`
+        text: `Closed out the Data Ops validation thread and updated ${issueLink} by <@${body.user.id}>.`
       });
     } catch (error) {
       logger.error(error);
