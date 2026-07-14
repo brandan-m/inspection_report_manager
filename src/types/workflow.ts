@@ -129,6 +129,7 @@ export interface CreateIssueInput {
   requesterName?: string;
   blockerType?: BlockerType;
   opsDowntimeHours?: number;
+  customFields?: Record<string, unknown>;
 }
 
 export interface EpicOption {
@@ -174,6 +175,7 @@ export interface EodThreadContext {
 export interface DataOpsValidationState {
   threadTs: string;
   jiraIssueKey?: string;
+  jiraStatusName?: string;
   slug?: string;
   percentCaptured?: number;
   percentUploaded?: number;

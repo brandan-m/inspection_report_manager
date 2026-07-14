@@ -147,7 +147,8 @@ export async function createIssue(input: CreateIssueInput): Promise<JiraCreateIs
 
   const payload = {
     fields: {
-      ...fields
+      ...fields,
+      ...(input.customFields ?? {})
     }
   };
 
