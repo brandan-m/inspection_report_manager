@@ -1309,9 +1309,15 @@ export function buildSingleThreadEodReportModal(
   context: SingleThreadEodContext,
   state: SingleThreadEodModalStateValues = {}
 ) {
-  const usesTubeCount = state.assetType === "Boiler";
+  const existingAsset = state.taskKey ? context.assets.find((asset) => asset.parentTaskKey === state.taskKey) : undefined;
+  const selectedAssetType = existingAsset?.assetType ?? state.assetType;
+  const usesTubeCount = selectedAssetType === "Boiler";
   const progressFieldLabel =
-    state.assetType ? getEodProgressFieldLabel({ assetType: state.assetType }) : "sqft. % done";
+    selectedAssetType ? getEodProgressFieldLabel({ assetType: selectedAssetType }) : "sqft. % done";
+  const totalTubeCount = state.totalTubeCount ?? (existingAsset?.totalTubeCount ? String(existingAsset.totalTubeCount) : undefined);
+  const assetTypePrompt = existingAsset?.assetType
+    ? "*Choose the asset for this report. The component type will stay locked to the first selection for that asset.*"
+    : "*Choose the asset and component type for this report.*";
   return {
     type: "modal" as const,
     callback_id: CALLBACKS.singleThreadEodReportView,
@@ -1335,7 +1341,7 @@ export function buildSingleThreadEodReportModal(
           type: "mrkdwn",
           text:
             `*Parent Inspection:* ${context.parentEpicLabel ?? context.parentEpicKey}\n` +
-            "*Choose the asset and asset type for this report.*"
+            assetTypePrompt
         }
       },
       {
@@ -1357,25 +1363,37 @@ export function buildSingleThreadEodReportModal(
           }
         }
       },
-      {
-        type: "input",
-        block_id: CALLBACKS.singleThreadEodAssetTypeBlock,
-        dispatch_action: true,
-        element: {
-          type: "static_select",
-          action_id: CALLBACKS.singleThreadEodAssetTypeAction,
-          initial_option: selectedOption(state.assetType),
-          placeholder: {
-            type: "plain_text",
-            text: "Choose asset type"
-          },
-          options: simpleOptions(EOD_ASSET_TYPES)
-        },
-        label: {
-          type: "plain_text",
-          text: "Asset Type"
-        }
-      },
+      ...(existingAsset?.assetType
+        ? [
+            {
+              type: "section" as const,
+              text: {
+                type: "mrkdwn" as const,
+                text: `*Component Type:* ${existingAsset.assetType}`
+              }
+            }
+          ]
+        : [
+            {
+              type: "input" as const,
+              block_id: CALLBACKS.singleThreadEodAssetTypeBlock,
+              dispatch_action: true,
+              element: {
+                type: "static_select" as const,
+                action_id: CALLBACKS.singleThreadEodAssetTypeAction,
+                initial_option: selectedOption(selectedAssetType),
+                placeholder: {
+                  type: "plain_text" as const,
+                  text: "Choose asset type"
+                },
+                options: simpleOptions(EOD_ASSET_TYPES)
+              },
+              label: {
+                type: "plain_text" as const,
+                text: "Component Type"
+              }
+            }
+          ]),
       ...(usesTubeCount
         ? [
             {
@@ -1386,7 +1404,7 @@ export function buildSingleThreadEodReportModal(
                 action_id: CALLBACKS.eodTotalTubeCountAction,
                 is_decimal_allowed: false,
                 min_value: "1",
-                initial_value: state.totalTubeCount,
+                initial_value: totalTubeCount,
                 placeholder: {
                   type: "plain_text" as const,
                   text: "Enter the total tube count for this boiler"

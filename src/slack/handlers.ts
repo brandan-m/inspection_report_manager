@@ -2881,10 +2881,11 @@ export function registerSlackHandlers(app: App): void {
           view: buildSingleThreadEodReportModal(context, {
             taskKey: selectedTaskKey,
             taskLabel: selectedTaskLabel,
-            assetType: state.assetType ?? existingAsset?.assetType,
+            assetType: existingAsset?.assetType ?? state.assetType,
             totalTubeCount:
-              state.totalTubeCount ??
-              (existingAsset?.totalTubeCount ? String(existingAsset.totalTubeCount) : undefined)
+              existingAsset?.totalTubeCount
+                ? String(existingAsset.totalTubeCount)
+                : state.totalTubeCount
           })
         },
         logger,
@@ -3792,14 +3793,6 @@ export function registerSlackHandlers(app: App): void {
         ? view.state.values[CALLBACKS.singleThreadEodTaskBlock][CALLBACKS.singleThreadEodTaskAction].selected_option
             ?.value
         : undefined;
-    const assetType = parseEodAssetType(
-      getSelectedOptionValue(
-        view.state.values[CALLBACKS.singleThreadEodAssetTypeBlock]?.[CALLBACKS.singleThreadEodAssetTypeAction]
-      )
-    );
-    const selectedTotalTubeCountValue =
-      getPlainTextValue(view.state.values, CALLBACKS.eodTotalTubeCountBlock, CALLBACKS.eodTotalTubeCountAction) ?? "";
-
     try {
       context = decodeSingleThreadEodContext(view.private_metadata);
     } catch (error) {
@@ -3814,6 +3807,17 @@ export function registerSlackHandlers(app: App): void {
       return;
     }
 
+    const existingAsset = parentTaskKey ? context.assets.find((asset) => asset.parentTaskKey === parentTaskKey) : undefined;
+    const assetType =
+      existingAsset?.assetType ??
+      parseEodAssetType(
+        getSelectedOptionValue(
+          view.state.values[CALLBACKS.singleThreadEodAssetTypeBlock]?.[CALLBACKS.singleThreadEodAssetTypeAction]
+        )
+      );
+    const selectedTotalTubeCountValue =
+      getPlainTextValue(view.state.values, CALLBACKS.eodTotalTubeCountBlock, CALLBACKS.eodTotalTubeCountAction) ??
+      (existingAsset?.totalTubeCount ? String(existingAsset.totalTubeCount) : "");
     const fieldErrors: Record<string, string> = {};
 
     if (!parentTaskKey) {
@@ -4035,6 +4039,7 @@ export function registerSlackHandlers(app: App): void {
         if (updatedDataOpsContext.dataOps.jiraIssueKey) {
           const progressValues = getStoredDataOpsProgressValues(updatedDataOpsContext);
           const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+            slug: updatedDataOpsContext.dataOps.slug,
             percentCaptured: updatedDataOpsContext.dataOps.percentCaptured,
             percentUploaded: updatedDataOpsContext.dataOps.percentUploaded,
             percentValidated: updatedDataOpsContext.dataOps.percentValidated,
@@ -4217,6 +4222,7 @@ export function registerSlackHandlers(app: App): void {
       const workflow = getWorkflowByKey(context.workflowKey);
       const percentCaptured = context.dataOps.percentCaptured;
       const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+        slug: validation.values.slug,
         percentCaptured,
         percentUploaded: validation.values.percentUploaded,
         percentValidated: validation.values.percentValidated,
@@ -4362,6 +4368,7 @@ export function registerSlackHandlers(app: App): void {
       if (updatedContext.dataOps.jiraIssueKey) {
         const progressValues = getStoredDataOpsProgressValues(updatedContext);
         const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+          slug: updatedContext.dataOps.slug,
           percentCaptured: updatedContext.dataOps.percentCaptured,
           percentUploaded: updatedContext.dataOps.percentUploaded,
           percentValidated: updatedContext.dataOps.percentValidated,
