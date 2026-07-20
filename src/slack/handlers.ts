@@ -13,7 +13,7 @@ import {
 } from "../ehs/form.js";
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
-import { buildDataOpsJiraCustomFields } from "../jira/dataOpsFields.js";
+import { buildDataOpsJiraCustomFields, buildEodJiraCustomFields } from "../jira/dataOpsFields.js";
 import { transitionIssueToFirstAvailableStatus, transitionIssueToStatus } from "../jira/transitions.js";
 import { updateIssue } from "../jira/updateIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
@@ -654,11 +654,16 @@ function validateDataOpsCloseoutForm(values: ModalState | undefined):
   | { success: true; values: DataOpsCloseoutFormValues }
   | { success: false; errors: Record<string, string> } {
   const errors: Record<string, string> = {};
+  const algorithm = getSelectedOptionValue(values?.[CALLBACKS.dataOpsAlgorithmBlock]?.[CALLBACKS.dataOpsAlgorithmAction])?.trim();
   const dataQuality = getPlainTextValue(values, CALLBACKS.dataOpsQualityBlock, CALLBACKS.dataOpsQualityAction)?.trim();
   const forecastUrl =
     getPlainTextValue(values, CALLBACKS.dataOpsForecastUrlBlock, CALLBACKS.dataOpsForecastUrlAction)?.trim();
   const cantileverUrl =
     getPlainTextValue(values, CALLBACKS.dataOpsCantileverUrlBlock, CALLBACKS.dataOpsCantileverUrlAction)?.trim();
+
+  if (!algorithm) {
+    errors[CALLBACKS.dataOpsAlgorithmBlock] = "Algorithm is required.";
+  }
 
   if (!dataQuality) {
     errors[CALLBACKS.dataOpsQualityBlock] = "Data quality is required.";
@@ -676,7 +681,7 @@ function validateDataOpsCloseoutForm(values: ModalState | undefined):
     errors[CALLBACKS.dataOpsCantileverUrlBlock] = "Cantilever URL must start with http:// or https://.";
   }
 
-  if (Object.keys(errors).length > 0 || !dataQuality || !forecastUrl || !cantileverUrl) {
+  if (Object.keys(errors).length > 0 || !algorithm || !dataQuality || !forecastUrl || !cantileverUrl) {
     return {
       success: false,
       errors
@@ -686,6 +691,7 @@ function validateDataOpsCloseoutForm(values: ModalState | undefined):
   return {
     success: true,
     values: {
+      algorithm,
       dataQuality,
       forecastUrl,
       cantileverUrl
@@ -3482,6 +3488,9 @@ export function registerSlackHandlers(app: App): void {
       const workflow = getWorkflowByKey(context.workflowKey);
       const summary = buildEodReportSummary(context, validation.values);
       const details = formatEodReportDetails(context, validation.values);
+      const customFields = await buildEodJiraCustomFields(workflow.jiraProjectKey, {
+        assetType: context.assetType
+      });
       const resolveSlackUserMention = createSlackToJiraMentionResolver(client, logger);
       const resolveSlackUserGroupMention = createSlackUserGroupMentionResolver(client, logger);
       const resolvedFullDayOverviewContent = await richTextToResolvedJiraDocNodes(fullDayOverviewValue, {
@@ -3514,7 +3523,8 @@ export function registerSlackHandlers(app: App): void {
               : validation.values.fullDayOverviewContent
         }),
         requesterContent,
-        requesterName: body.user.id
+        requesterName: body.user.id,
+        customFields
       });
 
       const relatedInspectionIssueKey = context.parentTaskKey ?? (workflow.parentIssueType === "Task" ? context.parentEpicKey : undefined);
@@ -3800,6 +3810,9 @@ export function registerSlackHandlers(app: App): void {
       };
       const summary = buildEodReportSummary(assetContext, validation.values);
       const details = formatEodReportDetails(assetContext, validation.values);
+      const customFields = await buildEodJiraCustomFields(workflow.jiraProjectKey, {
+        assetType: selectedAssetType
+      });
       const resolveSlackUserMention = createSlackToJiraMentionResolver(client, logger);
       const resolveSlackUserGroupMention = createSlackUserGroupMentionResolver(client, logger);
       const resolvedFullDayOverviewContent = await richTextToResolvedJiraDocNodes(fullDayOverviewValue, {
@@ -3834,7 +3847,8 @@ export function registerSlackHandlers(app: App): void {
               : validation.values.fullDayOverviewContent
         }),
         requesterContent,
-        requesterName: body.user.id
+        requesterName: body.user.id,
+        customFields
       });
 
       try {
@@ -3932,7 +3946,9 @@ export function registerSlackHandlers(app: App): void {
         if (updatedDataOpsContext.dataOps.jiraIssueKey) {
           const progressValues = getStoredDataOpsProgressValues(updatedDataOpsContext);
           const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+            assetType: updatedDataOpsContext.assetType,
             slug: updatedDataOpsContext.dataOps.slug,
+            algorithm: updatedDataOpsContext.dataOps.algorithm,
             percentCaptured: updatedDataOpsContext.dataOps.percentCaptured,
             percentUploaded: updatedDataOpsContext.dataOps.percentUploaded,
             percentValidated: updatedDataOpsContext.dataOps.percentValidated,
@@ -4115,7 +4131,9 @@ export function registerSlackHandlers(app: App): void {
       const workflow = getWorkflowByKey(context.workflowKey);
       const percentCaptured = context.dataOps.percentCaptured;
       const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+        assetType: context.assetType,
         slug: validation.values.slug,
+        algorithm: context.dataOps.algorithm,
         percentCaptured,
         percentUploaded: validation.values.percentUploaded,
         percentValidated: validation.values.percentValidated,
@@ -4261,7 +4279,9 @@ export function registerSlackHandlers(app: App): void {
       if (updatedContext.dataOps.jiraIssueKey) {
         const progressValues = getStoredDataOpsProgressValues(updatedContext);
         const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+          assetType: updatedContext.assetType,
           slug: updatedContext.dataOps.slug,
+          algorithm: updatedContext.dataOps.algorithm,
           percentCaptured: updatedContext.dataOps.percentCaptured,
           percentUploaded: updatedContext.dataOps.percentUploaded,
           percentValidated: updatedContext.dataOps.percentValidated,

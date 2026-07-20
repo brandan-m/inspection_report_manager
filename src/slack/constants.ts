@@ -83,6 +83,8 @@ export const CALLBACKS = {
   dataOpsPrepAction: "data_ops_prep_input",
   dataOpsQaBlock: "data_ops_qa_block",
   dataOpsQaAction: "data_ops_qa_input",
+  dataOpsAlgorithmBlock: "data_ops_algorithm_block",
+  dataOpsAlgorithmAction: "data_ops_algorithm_select",
   dataOpsQualityBlock: "data_ops_quality_block",
   dataOpsQualityAction: "data_ops_quality_input",
   dataOpsForecastUrlBlock: "data_ops_forecast_url_block",
