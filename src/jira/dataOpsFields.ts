@@ -14,6 +14,7 @@ interface JiraCreateMetaResponse {
 }
 
 export interface DataOpsJiraFieldValues {
+  slug?: string;
   percentCaptured?: number;
   percentUploaded?: number;
   percentValidated?: number;
@@ -66,13 +67,14 @@ function addFieldIfPresent(
   target: Record<string, unknown>,
   fields: Record<string, { name: string }>,
   candidateNames: string[],
-  value: unknown
+  value: unknown,
+  fallbackFieldId?: string
 ) {
   if (value === undefined || value === null || value === "") {
     return;
   }
 
-  const fieldId = findFieldId(fields, candidateNames);
+  const fieldId = findFieldId(fields, candidateNames) ?? fallbackFieldId;
 
   if (!fieldId) {
     return;
@@ -88,6 +90,7 @@ export async function buildDataOpsJiraCustomFields(
   const fields = await getCreateFields(projectKey, "Data Ops");
   const customFields: Record<string, unknown> = {};
 
+  addFieldIfPresent(customFields, fields, ["slug id", "slugid", "slug"], values.slug, "customfield_18220");
   addFieldIfPresent(customFields, fields, ["% capt", "% captured", "percent capt", "percent captured"], values.percentCaptured);
   addFieldIfPresent(customFields, fields, ["% upload", "% uploaded", "percent upload", "percent uploaded"], values.percentUploaded);
   addFieldIfPresent(customFields, fields, ["% validated", "percent validated"], values.percentValidated);
