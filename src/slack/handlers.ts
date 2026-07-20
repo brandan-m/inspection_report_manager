@@ -446,7 +446,6 @@ function getDataOpsProgressModalStateValues(stateValues?: ModalState) {
   return {
     slug: getPlainTextValue(stateValues, CALLBACKS.dataOpsSlugBlock, CALLBACKS.dataOpsSlugAction),
     ownerSlackUserId: getSelectedUserValue(stateValues, CALLBACKS.dataOpsOwnerBlock, CALLBACKS.dataOpsOwnerAction),
-    percentCaptured: getPlainTextValue(stateValues, CALLBACKS.dataOpsCapturedBlock, CALLBACKS.dataOpsCapturedAction),
     percentUploaded: getPlainTextValue(stateValues, CALLBACKS.dataOpsUploadedBlock, CALLBACKS.dataOpsUploadedAction),
     percentValidated: getPlainTextValue(stateValues, CALLBACKS.dataOpsValidatedBlock, CALLBACKS.dataOpsValidatedAction),
     percentPrep: getPlainTextValue(stateValues, CALLBACKS.dataOpsPrepBlock, CALLBACKS.dataOpsPrepAction),
@@ -505,6 +504,25 @@ function isEodScopeComplete(
 
 function formatPercentValue(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function getDataOpsCapturedPercent(
+  context: Pick<SingleThreadEodAssetState, "assetType" | "totalTubeCount">,
+  progressValue?: number
+): number | undefined {
+  if (typeof progressValue !== "number" || !Number.isFinite(progressValue)) {
+    return undefined;
+  }
+
+  const rawPercent = usesTubeCountForEod(context)
+    ? getBoilerTubeCompletionPercent(context, progressValue)
+    : progressValue;
+
+  if (typeof rawPercent !== "number" || !Number.isFinite(rawPercent)) {
+    return undefined;
+  }
+
+  return Math.max(0, Math.min(100, rawPercent));
 }
 
 function getDataOpsStatusName(
@@ -586,12 +604,6 @@ function validateDataOpsProgressForm(values: ModalState | undefined):
     errors[CALLBACKS.dataOpsOwnerBlock] = "Owner is required.";
   }
 
-  const percentCaptured = validatePercentField(
-    getPlainTextValue(values, CALLBACKS.dataOpsCapturedBlock, CALLBACKS.dataOpsCapturedAction),
-    CALLBACKS.dataOpsCapturedBlock,
-    "% Captured",
-    errors
-  );
   const percentUploaded = validatePercentField(
     getPlainTextValue(values, CALLBACKS.dataOpsUploadedBlock, CALLBACKS.dataOpsUploadedAction),
     CALLBACKS.dataOpsUploadedBlock,
@@ -629,7 +641,6 @@ function validateDataOpsProgressForm(values: ModalState | undefined):
     values: {
       slug,
       ownerSlackUserId,
-      percentCaptured: percentCaptured as number,
       percentUploaded: percentUploaded as number,
       percentValidated: percentValidated as number,
       percentPrep: percentPrep as number,
@@ -698,7 +709,6 @@ function getStoredDataOpsProgressValues(
   if (
     !dataOps.slug ||
     !dataOps.ownerSlackUserId ||
-    dataOps.percentCaptured === undefined ||
     dataOps.percentUploaded === undefined ||
     dataOps.percentValidated === undefined ||
     dataOps.percentPrep === undefined ||
@@ -710,7 +720,6 @@ function getStoredDataOpsProgressValues(
   return {
     slug: dataOps.slug,
     ownerSlackUserId: dataOps.ownerSlackUserId,
-    percentCaptured: dataOps.percentCaptured,
     percentUploaded: dataOps.percentUploaded,
     percentValidated: dataOps.percentValidated,
     percentPrep: dataOps.percentPrep,
@@ -3948,6 +3957,18 @@ export function registerSlackHandlers(app: App): void {
         );
       }
 
+      const nextDataOpsState = existingAsset?.dataOps
+        ? {
+            ...existingAsset.dataOps,
+            percentCaptured: getDataOpsCapturedPercent(
+              {
+                assetType: selectedAssetType,
+                totalTubeCount: selectedTotalTubeCount
+              },
+              validation.values.numberOfScansCompleted
+            )
+          }
+        : undefined;
       const updatedRootContext = upsertSingleThreadEodAssetState(context, {
         parentTaskKey: selectedParentTaskKey,
         parentTaskSummary,
@@ -3955,7 +3976,7 @@ export function registerSlackHandlers(app: App): void {
         lastProgressValue: validation.values.numberOfScansCompleted,
         totalTubeCount: selectedTotalTubeCount,
         reportIssueKey: issue.key,
-        dataOps: existingAsset?.dataOps
+        dataOps: nextDataOpsState
       });
 
       await updateSingleThreadEodRootMessage(client, updatedRootContext);
@@ -3973,16 +3994,82 @@ export function registerSlackHandlers(app: App): void {
           assetType: selectedAssetType,
           reportIssueKey: issue.key,
           dataOps: {
-            jiraStatusName: "Inspection Started"
+            jiraStatusName: "Inspection Started",
+            percentCaptured: getDataOpsCapturedPercent(
+              {
+                assetType: selectedAssetType,
+                totalTubeCount: selectedTotalTubeCount
+              },
+              validation.values.numberOfScansCompleted
+            )
           }
         });
 
         const rootContextWithDataOps = syncDataOpsStateToSingleThreadContext(updatedRootContext, selectedParentTaskKey, {
           threadTs: dataOpsThreadContext.threadTs,
-          jiraStatusName: "Inspection Started"
+          jiraStatusName: "Inspection Started",
+          percentCaptured: dataOpsThreadContext.dataOps.percentCaptured
         });
 
         await updateSingleThreadEodRootMessage(client, rootContextWithDataOps);
+      } else if (nextDataOpsState?.threadTs) {
+        const updatedDataOpsContext: DataOpsValidationThreadContext = {
+          workflowKey: context.workflowKey,
+          parentEpicKey: context.parentEpicKey,
+          parentEpicLabel: context.parentEpicLabel,
+          channelId: context.channelId,
+          threadTs: nextDataOpsState.threadTs,
+          sourceThreadTs: context.threadTs,
+          parentTaskKey: selectedParentTaskKey,
+          parentTaskLabel,
+          parentTaskSummary,
+          assetType: selectedAssetType,
+          reportIssueKey: issue.key,
+          dataOps: {
+            ...nextDataOpsState
+          }
+        };
+
+        await updateDataOpsValidationThreadRootMessage(client, updatedDataOpsContext);
+
+        if (updatedDataOpsContext.dataOps.jiraIssueKey) {
+          const progressValues = getStoredDataOpsProgressValues(updatedDataOpsContext);
+          const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
+            percentCaptured: updatedDataOpsContext.dataOps.percentCaptured,
+            percentUploaded: updatedDataOpsContext.dataOps.percentUploaded,
+            percentValidated: updatedDataOpsContext.dataOps.percentValidated,
+            percentPrep: updatedDataOpsContext.dataOps.percentPrep,
+            percentQa: updatedDataOpsContext.dataOps.percentQa,
+            dataQuality: updatedDataOpsContext.dataOps.dataQuality,
+            forecastUrl: updatedDataOpsContext.dataOps.forecastUrl,
+            cantileverUrl: updatedDataOpsContext.dataOps.cantileverUrl
+          });
+
+          if (progressValues) {
+            const ownerContent = updatedDataOpsContext.dataOps.ownerSlackUserId
+              ? [await createSlackToJiraMentionResolver(client, logger)(updatedDataOpsContext.dataOps.ownerSlackUserId)]
+              : undefined;
+            const updatedByContent = [await createSlackToJiraMentionResolver(client, logger)(body.user.id)];
+
+            await updateIssue({
+              issueKey: updatedDataOpsContext.dataOps.jiraIssueKey,
+              summary: buildDataOpsIssueSummary(updatedDataOpsContext),
+              details: formatDataOpsIssueDetails(updatedDataOpsContext, progressValues),
+              descriptionContent: buildDataOpsDescriptionContent(
+                updatedDataOpsContext,
+                progressValues,
+                ownerContent,
+                updatedByContent
+              ),
+              customFields
+            });
+          } else {
+            await updateIssue({
+              issueKey: updatedDataOpsContext.dataOps.jiraIssueKey,
+              customFields
+            });
+          }
+        }
       }
 
       const completionMessage = buildEodCompletionMessage({
@@ -4128,8 +4215,9 @@ export function registerSlackHandlers(app: App): void {
 
     try {
       const workflow = getWorkflowByKey(context.workflowKey);
+      const percentCaptured = context.dataOps.percentCaptured;
       const customFields = await buildDataOpsJiraCustomFields(workflow.jiraProjectKey, {
-        percentCaptured: validation.values.percentCaptured,
+        percentCaptured,
         percentUploaded: validation.values.percentUploaded,
         percentValidated: validation.values.percentValidated,
         percentPrep: validation.values.percentPrep,
@@ -4142,7 +4230,7 @@ export function registerSlackHandlers(app: App): void {
           jiraStatusName: context.dataOps.closedOutAt ? context.dataOps.jiraStatusName : "IN REVIEW",
           slug: validation.values.slug,
           ownerSlackUserId: validation.values.ownerSlackUserId,
-          percentCaptured: validation.values.percentCaptured,
+          percentCaptured,
           percentUploaded: validation.values.percentUploaded,
           percentValidated: validation.values.percentValidated,
           percentPrep: validation.values.percentPrep,
