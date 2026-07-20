@@ -47,6 +47,7 @@ const EOD_ASSET_TYPES: EodAssetType[] = [
   "Towers"
 ];
 const EOD_YES_NO: EodYesNo[] = ["Yes", "No"];
+const DATA_OPS_ALGORITHMS = ["C-Snoop", "Snoop", "M2-Flank", "M2-Peak", "M3-Flank", "M3-Peak"] as const;
 const CHANNEL_CONVERSATION_TYPES: Array<"public"> = ["public"];
 const SLACK_OPTION_TEXT_LIMIT = 75;
 
@@ -812,6 +813,7 @@ export function encodeSingleThreadEodContext(context: SingleThreadEodContext): s
             pp: asset.dataOps.percentPrep,
             pq: asset.dataOps.percentQa,
             ow: asset.dataOps.ownerSlackUserId,
+            ag: asset.dataOps.algorithm,
             dq: asset.dataOps.dataQuality,
             fu: asset.dataOps.forecastUrl,
             cu: asset.dataOps.cantileverUrl,
@@ -839,6 +841,7 @@ function decodeDataOpsValidationState(value: unknown): DataOpsValidationState | 
     pp?: unknown;
     pq?: unknown;
     ow?: unknown;
+    ag?: unknown;
     dq?: unknown;
     fu?: unknown;
     cu?: unknown;
@@ -866,6 +869,7 @@ function decodeDataOpsValidationState(value: unknown): DataOpsValidationState | 
     percentPrep: numberOrUndefined(dataOps.pp),
     percentQa: numberOrUndefined(dataOps.pq),
     ownerSlackUserId: stringOrUndefined(dataOps.ow),
+    algorithm: stringOrUndefined(dataOps.ag),
     dataQuality: stringOrUndefined(dataOps.dq),
     forecastUrl: stringOrUndefined(dataOps.fu),
     cantileverUrl: stringOrUndefined(dataOps.cu),
@@ -1068,6 +1072,10 @@ export function decodeDataOpsValidationThreadContext(value: string): DataOpsVali
       ownerSlackUserId:
         typeof parsed.dataOps?.ownerSlackUserId === "string" && parsed.dataOps.ownerSlackUserId.trim().length > 0
           ? parsed.dataOps.ownerSlackUserId
+          : undefined,
+      algorithm:
+        typeof parsed.dataOps?.algorithm === "string" && parsed.dataOps.algorithm.trim().length > 0
+          ? parsed.dataOps.algorithm
           : undefined,
       dataQuality:
         typeof parsed.dataOps?.dataQuality === "string" && parsed.dataOps.dataQuality.trim().length > 0
@@ -1709,6 +1717,24 @@ export function buildDataOpsCloseoutModal(context: DataOpsValidationThreadContex
             "*Add the final Data Ops closeout details for this validation thread.*"
         }
       },
+      {
+        type: "input" as const,
+        block_id: CALLBACKS.dataOpsAlgorithmBlock,
+        element: {
+          type: "static_select" as const,
+          action_id: CALLBACKS.dataOpsAlgorithmAction,
+          ...(context.dataOps.algorithm ? { initial_option: selectedOption(context.dataOps.algorithm) } : {}),
+          placeholder: {
+            type: "plain_text" as const,
+            text: "Choose algorithm"
+          },
+          options: simpleOptions([...DATA_OPS_ALGORITHMS])
+        },
+        label: {
+          type: "plain_text" as const,
+          text: "Algorithm"
+        }
+      },
       plainTextInputBlock(
         CALLBACKS.dataOpsQualityBlock,
         CALLBACKS.dataOpsQualityAction,
@@ -1759,6 +1785,10 @@ export function formatDataOpsIssueDetails(
     lines.push(`Data Quality: ${context.dataOps.dataQuality}`);
   }
 
+  if (context.dataOps.algorithm) {
+    lines.push(`Algorithm: ${context.dataOps.algorithm}`);
+  }
+
   if (context.dataOps.forecastUrl) {
     lines.push(`Forecast URL: ${context.dataOps.forecastUrl}`);
   }
@@ -1805,6 +1835,10 @@ export function buildDataOpsDescriptionContent(
     content.push(jiraParagraph("Data Quality", context.dataOps.dataQuality));
   }
 
+  if (context.dataOps.algorithm) {
+    content.push(jiraParagraph("Algorithm", context.dataOps.algorithm));
+  }
+
   if (context.dataOps.forecastUrl) {
     content.push(jiraParagraph("Forecast URL", context.dataOps.forecastUrl));
   }
@@ -1826,6 +1860,7 @@ export function applyDataOpsCloseoutToContext(
     ...context,
     dataOps: {
       ...context.dataOps,
+      algorithm: values.algorithm.trim(),
       dataQuality: values.dataQuality.trim(),
       forecastUrl: values.forecastUrl.trim(),
       cantileverUrl: values.cantileverUrl.trim(),

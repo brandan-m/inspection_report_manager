@@ -192,6 +192,7 @@ export interface DataOpsValidationState {
   percentPrep?: number;
   percentQa?: number;
   ownerSlackUserId?: string;
+  algorithm?: string;
   dataQuality?: string;
   forecastUrl?: string;
   cantileverUrl?: string;
@@ -244,6 +245,7 @@ export interface DataOpsProgressFormValues {
 }
 
 export interface DataOpsCloseoutFormValues {
+  algorithm: string;
   dataQuality: string;
   forecastUrl: string;
   cantileverUrl: string;
