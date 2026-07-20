@@ -326,7 +326,6 @@ export interface SingleThreadEodModalStateValues {
 export interface DataOpsProgressModalStateValues {
   slug?: string;
   ownerSlackUserId?: string;
-  percentCaptured?: string;
   percentUploaded?: string;
   percentValidated?: string;
   percentPrep?: string;
@@ -1414,6 +1413,10 @@ export function buildDataOpsProgressModal(
 ) {
   const initialSlug = state.slug ?? context.dataOps.slug;
   const initialOwnerSlackUserId = state.ownerSlackUserId ?? context.dataOps.ownerSlackUserId;
+  const capturedPercentLabel =
+    typeof context.dataOps.percentCaptured === "number" && Number.isFinite(context.dataOps.percentCaptured)
+      ? `\`${formatDataOpsPercent(context.dataOps.percentCaptured)}%\``
+      : "Pending";
 
   return {
     type: "modal" as const,
@@ -1450,6 +1453,13 @@ export function buildDataOpsProgressModal(
         initialSlug
       ),
       {
+        type: "section" as const,
+        text: {
+          type: "mrkdwn" as const,
+          text: `*% Captured:* ${capturedPercentLabel} _(from the latest Single Thread EOD progress)_`
+        }
+      },
+      {
         type: "input" as const,
         block_id: CALLBACKS.dataOpsOwnerBlock,
         element: {
@@ -1464,28 +1474,6 @@ export function buildDataOpsProgressModal(
         label: {
           type: "plain_text" as const,
           text: "Owner"
-        }
-      },
-      {
-        type: "input" as const,
-        block_id: CALLBACKS.dataOpsCapturedBlock,
-        element: {
-          type: "number_input" as const,
-          action_id: CALLBACKS.dataOpsCapturedAction,
-          is_decimal_allowed: true,
-          min_value: "0",
-          max_value: "100",
-          ...optionalNumberInitialValue(
-            state.percentCaptured ?? formatDataOpsPercent(context.dataOps.percentCaptured)
-          ),
-          placeholder: {
-            type: "plain_text" as const,
-            text: "0"
-          }
-        },
-        label: {
-          type: "plain_text" as const,
-          text: "% Captured"
         }
       },
       {

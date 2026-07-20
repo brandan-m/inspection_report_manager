@@ -228,7 +228,6 @@ export interface DataOpsValidationThreadContext {
 export interface DataOpsProgressFormValues {
   slug: string;
   ownerSlackUserId: string;
-  percentCaptured: number;
   percentUploaded: number;
   percentValidated: number;
   percentPrep: number;
