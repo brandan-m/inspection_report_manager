@@ -17,6 +17,19 @@ interface JiraCreateMetaResponse {
   }>;
 }
 
+interface JiraEditMetaResponse {
+  fields: Record<
+    string,
+    {
+      name: string;
+      allowedValues?: Array<{
+        id: string;
+        value: string;
+      }>;
+    }
+  >;
+}
+
 export interface DataOpsJiraFieldValues {
   slug?: string;
   assetType?: string;
@@ -40,6 +53,7 @@ type JiraCreateField = {
 };
 
 const fieldCache = new Map<string, Promise<Record<string, JiraCreateField>>>();
+const editFieldCache = new Map<string, Promise<Record<string, JiraCreateField>>>();
 
 async function getCreateFields(projectKey: string, issueType: string) {
   const cacheKey = `${projectKey}:${issueType}`;
@@ -64,6 +78,21 @@ async function getCreateFields(projectKey: string, issueType: string) {
   })();
 
   fieldCache.set(cacheKey, pending);
+  return pending;
+}
+
+async function getEditFields(issueKey: string) {
+  const cached = editFieldCache.get(issueKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const pending = jiraRequest<JiraEditMetaResponse>(
+    `/rest/api/3/issue/${encodeURIComponent(issueKey)}/editmeta`
+  ).then((result) => result.fields);
+
+  editFieldCache.set(issueKey, pending);
   return pending;
 }
 
@@ -151,6 +180,35 @@ export async function buildDataOpsJiraCustomFields(
   addFieldIfPresent(customFields, fields, ["data quality"], values.dataQuality);
   addFieldIfPresent(customFields, fields, ["forecast url", "forecast link"], values.forecastUrl);
   addFieldIfPresent(customFields, fields, ["cantilever url", "cantilever link"], values.cantileverUrl);
+
+  return customFields;
+}
+
+export async function buildAssetTaskProgressCustomFields(
+  issueKey: string,
+  values: Pick<
+    DataOpsJiraFieldValues,
+    "percentCaptured" | "percentUploaded" | "percentValidated" | "percentPrep" | "percentQa"
+  >
+): Promise<Record<string, unknown>> {
+  const fields = await getEditFields(issueKey);
+  const customFields: Record<string, unknown> = {};
+
+  addFieldIfPresent(
+    customFields,
+    fields,
+    ["% capt", "% captured", "percent capt", "percent captured"],
+    values.percentCaptured
+  );
+  addFieldIfPresent(
+    customFields,
+    fields,
+    ["% upload", "% uploaded", "percent upload", "percent uploaded"],
+    values.percentUploaded
+  );
+  addFieldIfPresent(customFields, fields, ["% prep", "percent prep"], values.percentPrep);
+  addFieldIfPresent(customFields, fields, ["%qa", "% qa", "percent qa"], values.percentQa);
+  addFieldIfPresent(customFields, fields, ["% validated", "percent validated"], values.percentValidated);
 
   return customFields;
 }

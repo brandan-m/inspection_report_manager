@@ -13,7 +13,11 @@ import {
 } from "../ehs/form.js";
 import { uploadAttachmentToIssue } from "../jira/attachments.js";
 import { createIssue } from "../jira/createIssue.js";
-import { buildDataOpsJiraCustomFields, buildEodJiraCustomFields } from "../jira/dataOpsFields.js";
+import {
+  buildAssetTaskProgressCustomFields,
+  buildDataOpsJiraCustomFields,
+  buildEodJiraCustomFields
+} from "../jira/dataOpsFields.js";
 import { transitionIssueToFirstAvailableStatus, transitionIssueToStatus } from "../jira/transitions.js";
 import { updateIssue } from "../jira/updateIssue.js";
 import { findJiraUserForSlackProfile } from "../jira/users.js";
@@ -3653,6 +3657,14 @@ export function registerSlackHandlers(app: App): void {
             }`
           );
         }
+
+        const assetProgressFields = await buildAssetTaskProgressCustomFields(relatedInspectionIssueKey, {
+          percentCaptured: getDataOpsCapturedPercent(context, validation.values.numberOfScansCompleted)
+        });
+        await updateIssue({
+          issueKey: relatedInspectionIssueKey,
+          customFields: assetProgressFields
+        });
       }
 
       const completionMessage = buildEodCompletionMessage({
@@ -3975,16 +3987,25 @@ export function registerSlackHandlers(app: App): void {
         );
       }
 
+      const percentCaptured = getDataOpsCapturedPercent(
+        {
+          assetType: selectedAssetType,
+          totalTubeCount: selectedTotalTubeCount
+        },
+        validation.values.numberOfScansCompleted
+      );
+      const assetProgressFields = await buildAssetTaskProgressCustomFields(selectedParentTaskKey, {
+        percentCaptured
+      });
+      await updateIssue({
+        issueKey: selectedParentTaskKey,
+        customFields: assetProgressFields
+      });
+
       const nextDataOpsState = existingAsset?.dataOps
         ? {
             ...existingAsset.dataOps,
-            percentCaptured: getDataOpsCapturedPercent(
-              {
-                assetType: selectedAssetType,
-                totalTubeCount: selectedTotalTubeCount
-              },
-              validation.values.numberOfScansCompleted
-            )
+            percentCaptured
           }
         : undefined;
       const updatedRootContext = upsertSingleThreadEodAssetState(context, {
@@ -4013,13 +4034,7 @@ export function registerSlackHandlers(app: App): void {
           reportIssueKey: issue.key,
           dataOps: {
             jiraStatusName: "Inspection Started",
-            percentCaptured: getDataOpsCapturedPercent(
-              {
-                assetType: selectedAssetType,
-                totalTubeCount: selectedTotalTubeCount
-              },
-              validation.values.numberOfScansCompleted
-            )
+            percentCaptured
           }
         });
 
@@ -4325,6 +4340,17 @@ export function registerSlackHandlers(app: App): void {
         });
       }
 
+      const assetProgressFields = await buildAssetTaskProgressCustomFields(updatedContext.parentTaskKey, {
+        percentUploaded: validation.values.percentUploaded,
+        percentValidated: validation.values.percentValidated,
+        percentPrep: validation.values.percentPrep,
+        percentQa: validation.values.percentQa
+      });
+      await updateIssue({
+        issueKey: updatedContext.parentTaskKey,
+        customFields: assetProgressFields
+      });
+
       await updateDataOpsValidationThreadRootMessage(client, updatedContext);
       const issueLink = updatedContext.dataOps.jiraIssueKey
         ? buildLinkedJiraLabel(updatedContext.dataOps.jiraIssueKey, updatedContext.dataOps.jiraIssueKey)
@@ -4425,6 +4451,17 @@ export function registerSlackHandlers(app: App): void {
 
         await transitionIssueToStatus(updatedContext.dataOps.jiraIssueKey, "CLOSED");
       }
+
+      const assetProgressFields = await buildAssetTaskProgressCustomFields(updatedContext.parentTaskKey, {
+        percentUploaded: updatedContext.dataOps.percentUploaded,
+        percentValidated: updatedContext.dataOps.percentValidated,
+        percentPrep: updatedContext.dataOps.percentPrep,
+        percentQa: updatedContext.dataOps.percentQa
+      });
+      await updateIssue({
+        issueKey: updatedContext.parentTaskKey,
+        customFields: assetProgressFields
+      });
 
       await updateDataOpsValidationThreadRootMessage(client, updatedContext);
       const issueLink = updatedContext.dataOps.jiraIssueKey
